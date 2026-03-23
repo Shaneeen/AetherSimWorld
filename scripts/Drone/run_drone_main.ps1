@@ -13,4 +13,4 @@ $pythonExe = if (Test-Path $preferredPython) {
     "python"
 }
 
-& $pythonExe .\scripts\prompt_agent.py
+& $pythonExe .\scripts\Drone\Drone_Main.py

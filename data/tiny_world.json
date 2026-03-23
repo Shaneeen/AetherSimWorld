@@ -1,0 +1,109 @@
+{
+  "nodes": [
+    {
+      "id": "Tiny_Building_01",
+      "instance_name": "BP_Building_01_C",
+      "properties": {
+        "location": {
+          "x": 1400,
+          "y": 0,
+          "z": 0
+        },
+        "orientation": {
+          "pitch": 0,
+          "yaw": 180,
+          "roll": 0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
+      }
+    },
+    {
+      "id": "Tiny_Building_12",
+      "instance_name": "BP_Building_12_C",
+      "properties": {
+        "location": {
+          "x": 0,
+          "y": 2200,
+          "z": 0
+        },
+        "orientation": {
+          "pitch": 0,
+          "yaw": -90,
+          "roll": 0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
+      }
+    },
+    {
+      "id": "Tiny_Building_23",
+      "instance_name": "BP_Building_23_C",
+      "properties": {
+        "location": {
+          "x": -2600,
+          "y": -400,
+          "z": 0
+        },
+        "orientation": {
+          "pitch": 0,
+          "yaw": 20,
+          "roll": 0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
+      }
+    },
+    {
+      "id": "Tiny_Tree_01",
+      "instance_name": "BP_Tree1_C",
+      "properties": {
+        "location": {
+          "x": 450,
+          "y": 900,
+          "z": 0
+        },
+        "orientation": {
+          "pitch": 0,
+          "yaw": 0,
+          "roll": 0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
+      }
+    },
+    {
+      "id": "Tiny_Tree_04",
+      "instance_name": "BP_Tree4_C",
+      "properties": {
+        "location": {
+          "x": -800,
+          "y": 1100,
+          "z": 0
+        },
+        "orientation": {
+          "pitch": 0,
+          "yaw": 0,
+          "roll": 0
+        },
+        "scale": {
+          "x": 1.0,
+          "y": 1.0,
+          "z": 1.0
+        }
+      }
+    }
+  ]
+}

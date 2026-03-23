@@ -25,6 +25,7 @@ class BuildingGenerator:
 
         self.building_counts = {b: 0 for b in building_types}
         self.building_to_segment = {}
+        self.spawn_probability = max(0.0, min(1.0, float(self.config.get('citygen.building.spawn_probability', 1.0))))
 
         self.logger = Logger.get_logger('BuildingGenerator')
 
@@ -112,6 +113,12 @@ class BuildingGenerator:
                 building_bounds = Bounds(x - building_type.width / 2, y - building_type.height / 2, building_type.width, building_type.height, rotation)
 
                 if self.building_manager.can_place_building(building_bounds) and not self.check_building_road_overlap(building_bounds, road_quadtree):
+                    if random.random() > self.spawn_probability:
+                        current_pos += building_type.width / 2 + self.config['citygen.building.building_building_distance']
+                        building_type = self.get_next_building_type()
+                        overlap_building_flag = False
+                        overlap_road_flag = False
+                        continue
                     building = Building(
                         building_type=building_type,
                         bounds=building_bounds,

@@ -15,7 +15,10 @@ import cv2
 import numpy as np
 import PIL.Image
 import unrealcv
-from IPython.display import display
+try:
+    from IPython.display import display
+except ModuleNotFoundError:
+    display = None
 
 from simworld.utils.logger import Logger
 
@@ -1020,7 +1023,9 @@ class UnrealCV(object):
 
             # Convert to PIL Image
             pil_img = PIL.Image.fromarray(img_rgb)
-            # Display in notebook
+            # Display in notebook when IPython is available.
+            if display is None:
+                raise ImportError('IPython is not installed')
             display(pil_img)
         except ImportError:
             # Fallback to OpenCV display if not in notebook

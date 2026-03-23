@@ -5,23 +5,51 @@ Run a local UnrealCV server and a local Ollama server before using this script.
 Usage:
   python scripts/prompt_agent.py
 """
+from pathlib import Path
 import time
 import os
 import json
+import random
 import requests
 import math
 import sys
+import socket
+import subprocess
 from typing import Optional
-from pathlib import Path
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+STARTUP_LOG_PATH = REPO_ROOT / 'logs' / 'prompt_agent_startup.log'
+
+
+def startup_log(message: str):
+    STARTUP_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    timestamp = time.strftime('%Y-%m-%d %H:%M:%S')
+    line = f'[{timestamp}] {message}'
+    print(line)
+    with STARTUP_LOG_PATH.open('a', encoding='utf-8') as f:
+        f.write(line + '\n')
+
 
 import numpy as np
 
-from simworld.communicator.unrealcv import UnrealCV
-from simworld.communicator.communicator import Communicator
-from simworld.agent.humanoid import Humanoid
-from simworld.citygen.function_call.city_function_call import CityFunctionCall
-from simworld.utils.vector import Vector
-from simworld.config import Config
+startup_log(f'Python executable: {sys.executable}')
+startup_log(f'Working directory: {os.getcwd()}')
+startup_log(f'Repo root: {REPO_ROOT}')
+
+try:
+    startup_log('Importing SimWorld modules...')
+    from simworld.communicator.unrealcv import UnrealCV
+    from simworld.communicator.communicator import Communicator
+    from simworld.agent.humanoid import Humanoid
+    from simworld.utils.vector import Vector
+    from simworld.config import Config
+    startup_log('SimWorld imports succeeded.')
+except Exception as e:
+    startup_log(f'SimWorld import failed: {type(e).__name__}: {e}')
+    raise
 
 # Vision model cache
 _vision_pipeline = None
@@ -32,6 +60,9 @@ _walk_speed_cm_per_sec = 200.0
 _last_survey_options = []
 _last_survey_query = ''
 DEFAULT_OLLAMA_TIMEOUT_SEC = 60.0
+DEFAULT_SIMWORLD_EXE = r"D:\Windows\Windows\SimWorld.exe"
+DEFAULT_SIMWORLD_MAP = "/Game/Maps/empty.umap"
+DEFAULT_UNREALCV_PORT = 9000
 
 
 def debug_enabled() -> bool:
@@ -254,6 +285,70 @@ def parse_numeric(value, default=None):
         return float(value)
     except (TypeError, ValueError):
         return default
+
+
+def get_simworld_exe_path() -> Path:
+    exe_path = os.environ.get('SIMWORLD_EXE', DEFAULT_SIMWORLD_EXE)
+    return Path(exe_path)
+
+
+def is_port_open(host: str, port: int, timeout_sec: float = 1.0) -> bool:
+    try:
+        with socket.create_connection((host, port), timeout=timeout_sec):
+            return True
+    except OSError:
+        return False
+
+
+def maybe_launch_simworld():
+    """Launch the UE server if requested and not already listening."""
+    if os.environ.get('SIMWORLD_AUTO_LAUNCH', '0') != '1':
+        return 'disabled'
+
+    host = os.environ.get('SIMWORLD_HOST', '127.0.0.1')
+    port = int(os.environ.get('SIMWORLD_PORT', str(DEFAULT_UNREALCV_PORT)))
+    if is_port_open(host, port, timeout_sec=0.5):
+        print(f'SimWorld already listening on {host}:{port}, reusing existing server.')
+        return 'reused'
+
+    exe_path = get_simworld_exe_path()
+    if not exe_path.exists():
+        raise FileNotFoundError(f'SimWorld executable not found: {exe_path}')
+
+    map_path = os.environ.get('SIMWORLD_MAP_PATH', DEFAULT_SIMWORLD_MAP)
+    cmd = [str(exe_path), map_path]
+    print(f'Launching SimWorld: {" ".join(cmd)}')
+    creationflags = getattr(subprocess, 'CREATE_NEW_PROCESS_GROUP', 0)
+    subprocess.Popen(cmd, creationflags=creationflags)
+    return 'launched'
+
+
+def wait_for_user_world_ready():
+    """Pause until the user confirms the UE window finished loading."""
+    print('When the world is fully loaded, press Enter or type 1, then press Enter.')
+    while True:
+        answer = input('Loaded? [Enter/1]: ').strip()
+        if answer in ('', '1'):
+            return
+        print('Press Enter or type 1 when SimWorld is ready.')
+
+
+def wait_for_simworld_server():
+    """Wait until the UnrealCV port starts accepting connections."""
+    host = os.environ.get('SIMWORLD_HOST', '127.0.0.1')
+    port = int(os.environ.get('SIMWORLD_PORT', str(DEFAULT_UNREALCV_PORT)))
+    timeout_sec = float(os.environ.get('SIMWORLD_START_TIMEOUT_SEC', '120'))
+    poll_sec = 1.0
+    deadline = time.time() + timeout_sec
+
+    print(f'Waiting for SimWorld on {host}:{port}...')
+    while time.time() < deadline:
+        if is_port_open(host, port, timeout_sec=0.5):
+            print('SimWorld is ready.')
+            return
+        time.sleep(poll_sec)
+
+    raise TimeoutError(f'SimWorld did not start listening on {host}:{port} within {timeout_sec:.0f} seconds')
 
 
 def extract_coordinate_pair(text: str):
@@ -1719,6 +1814,10 @@ def execute_command(comm: Communicator, ucv: UnrealCV, hum: Humanoid, ollama_mod
 
 
 def main():
+    launch_state = maybe_launch_simworld()
+    if launch_state in ('launched', 'reused'):
+        wait_for_user_world_ready()
+    wait_for_simworld_server()
     print('Connecting to UnrealCV (localhost:9000)...')
     resolution_text = os.environ.get('SIMWORLD_RESOLUTION', '320x240').lower()
     try:
@@ -1726,7 +1825,9 @@ def main():
         resolution = (int(width_text), int(height_text))
     except Exception:
         resolution = (320, 240)
-    ucv = UnrealCV(port=9000, ip='127.0.0.1', resolution=resolution)
+    host = os.environ.get('SIMWORLD_HOST', '127.0.0.1')
+    port = int(os.environ.get('SIMWORLD_PORT', str(DEFAULT_UNREALCV_PORT)))
+    ucv = UnrealCV(port=port, ip=host, resolution=resolution)
     comm = Communicator(ucv)
     config_path = os.environ.get('SIMWORLD_CONFIG')
     cfg = Config(config_path) if config_path else Config()
@@ -1828,6 +1929,12 @@ def main():
         print('\nInterrupted by user')
 
     finally:
+        try:
+            if cfg.get('manual_scene.clear_on_exit', True):
+                print('Clearing generated world and returning to empty map...')
+                comm.clear_env(keep_roads=False)
+        except Exception as e:
+            print('Cleanup warning:', e)
         print('Disconnecting...')
         try:
             ucv.disconnect()
@@ -1855,9 +1962,14 @@ def generate_lightweight_world(comm: Communicator, cfg: Config):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     print(f'Generating procedural city into {output_dir}...')
-    cfc = CityFunctionCall(cfg)
-    cfc.generate_city()
-    cfc.export_city(str(output_dir))
+    from simworld.citygen.city.city_generator import CityGenerator
+    from simworld.utils.data_exporter import DataExporter
+
+    city = CityGenerator(cfg)
+    city.generate()
+    exporter = DataExporter(city)
+    exporter.export_to_json(str(output_dir))
+    apply_manual_scene_overrides(Path(cfg['citygen.world_json']), cfg)
 
     world_json = Path(cfg['citygen.world_json'])
     ue_asset_path = Path(cfg['citygen.ue_asset_path'])
@@ -1869,6 +1981,51 @@ def generate_lightweight_world(comm: Communicator, cfg: Config):
     print(f'Loading generated world from {world_json}...')
     comm.clear_env(keep_roads=False)
     comm.generate_world(str(world_json), str(ue_asset_path), run_time=False)
+
+
+def apply_manual_scene_overrides(world_json: Path, cfg: Config):
+    """Apply deterministic scene tweaks after procedural export."""
+    if cfg.get('manual_scene.scattered_trees.enabled', False):
+        add_scattered_trees(
+            world_json,
+            count=int(cfg.get('manual_scene.scattered_trees.count', 10)),
+            min_radius_cm=float(cfg.get('manual_scene.scattered_trees.min_radius_cm', 500)),
+            max_radius_cm=float(cfg.get('manual_scene.scattered_trees.max_radius_cm', 1500)),
+        )
+
+
+def add_scattered_trees(world_json: Path, count: int, min_radius_cm: float, max_radius_cm: float):
+    """Replace generated element clutter with a small scattered set of trees."""
+    data = json.loads(world_json.read_text(encoding='utf-8'))
+    nodes = data.get('nodes', [])
+
+    # Keep roads/buildings from citygen and remove any previously generated tree/element clutter.
+    kept_nodes = [node for node in nodes if not node.get('instance_name', '').startswith('BP_Tree')]
+
+    tree_types = ['BP_Tree1_C', 'BP_Tree2_C', 'BP_Tree3_C', 'BP_Tree4_C', 'BP_Tree5_C', 'BP_Tree6_C']
+    rng = random.Random(42)
+    min_radius_cm = max(0.0, float(min_radius_cm))
+    max_radius_cm = max(min_radius_cm, float(max_radius_cm))
+
+    for index in range(max(0, count)):
+        angle = rng.uniform(0.0, 2.0 * math.pi)
+        radius = rng.uniform(min_radius_cm, max_radius_cm)
+        x = round(math.cos(angle) * radius, 2)
+        y = round(math.sin(angle) * radius, 2)
+        kept_nodes.append(
+            {
+                'id': f'ScatterTree_{index + 1}',
+                'instance_name': tree_types[index % len(tree_types)],
+                'properties': {
+                    'location': {'x': x, 'y': y, 'z': 20},
+                    'orientation': {'pitch': 0, 'yaw': rng.randint(0, 359), 'roll': 0},
+                    'scale': {'x': 1.0, 'y': 1.0, 'z': 1.0},
+                },
+            }
+        )
+
+    data['nodes'] = kept_nodes
+    world_json.write_text(json.dumps(data, indent=2), encoding='utf-8')
 
 
 if __name__ == '__main__':

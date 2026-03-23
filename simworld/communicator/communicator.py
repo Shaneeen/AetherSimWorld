@@ -9,7 +9,6 @@ import re
 from threading import Lock
 
 import numpy as np
-import pandas as pd
 
 from simworld.communicator.unrealcv import UnrealCV
 from simworld.utils.load_json import load_json
@@ -823,10 +822,7 @@ class Communicator:
         generated_ids = set()
         # Load world from JSON
         world_setting = load_json(world_json)
-        # Use pandas data structure, convert JSON data to pandas dataframe
         nodes = world_setting['nodes']
-        node_df = pd.json_normalize(nodes, sep='_')
-        node_df.set_index('id', inplace=True)
 
         # Load asset library
         asset_library = load_json(ue_asset_path)
@@ -843,36 +839,51 @@ class Communicator:
                 return [int(match.group(1)), int(match.group(2)), int(match.group(3))]
             return [0, 0, 0]  # Default to black if parsing fails
 
-        def _process_node(row):
+        def _process_node(node):
             """Process a single node.
 
             Args:
-                row: Node row.
+                node: Node data.
             """
             # Spawn each node on the map
-            id = row.name  # name is the index of the row
+            id = node['id']
             try:
-                instance_ref = asset_library[node_df.loc[id, 'instance_name']]['asset_path']
-                color = asset_library['colors'][asset_library[node_df.loc[id, 'instance_name']]['color']]
+                instance_name = node['instance_name']
+                instance_ref = asset_library[instance_name]['asset_path']
+                color = asset_library['colors'][asset_library[instance_name]['color']]
                 rgb_values = _parse_rgb(color)
             except KeyError:
-                self.logger.error(f"Can't find node {node_df.loc[id, 'instance_name']} in asset library")
+                self.logger.error(f"Can't find node {node.get('instance_name')} in asset library")
                 return
             else:
                 self.unrealcv.spawn_bp_asset(instance_ref, id)
                 if run_time:
                     self.unrealcv.set_color(id, rgb_values)
-                location = node_df.loc[id, ['properties_location_x', 'properties_location_y', 'properties_location_z']].to_list()
+                props = node['properties']
+                location = [
+                    props['location']['x'],
+                    props['location']['y'],
+                    props['location']['z'],
+                ]
                 self.unrealcv.set_location(location, id)
-                orientation = node_df.loc[id, ['properties_orientation_pitch', 'properties_orientation_yaw', 'properties_orientation_roll']].to_list()
+                orientation = [
+                    props['orientation']['pitch'],
+                    props['orientation']['yaw'],
+                    props['orientation']['roll'],
+                ]
                 self.unrealcv.set_orientation(orientation, id)
-                scale = node_df.loc[id, ['properties_scale_x', 'properties_scale_y', 'properties_scale_z']].to_list()
+                scale = [
+                    props['scale']['x'],
+                    props['scale']['y'],
+                    props['scale']['z'],
+                ]
                 self.unrealcv.set_scale(scale, id)
                 self.unrealcv.set_collision(id, True)
                 self.unrealcv.set_movable(id, False)
                 generated_ids.add(id)
 
-        node_df.apply(_process_node, axis=1)
+        for node in nodes:
+            _process_node(node)
 
         return generated_ids
 

@@ -1,8 +1,6 @@
 """Main entry point for drone-based SimWorld control."""
 from pathlib import Path
-import json
 import os
-import re
 import sys
 import time
 
@@ -11,7 +9,11 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from scripts.Drone.common import (
+    debug_enabled,
+    debug_log,
     maybe_launch_simworld,
+    ollama_parse_drone_command,
+    parse_local_drone_command,
     startup_log,
     wait_for_simworld_server,
     wait_for_user_world_ready,
@@ -51,51 +53,6 @@ def check_airsim_connection():
         return True, 'AirSim RPC connected'
     except Exception as e:
         return False, f'AirSim RPC unavailable: {e}'
-
-
-def rule_parse(text: str):
-    t = text.strip().lower()
-    if t in ('quit', 'exit'):
-        return ('quit',)
-    if t in ('status',):
-        return ('status',)
-    if t in ('go above nearest tree', 'fly above nearest tree', 'hover above nearest tree'):
-        return ('above_nearest_tree',)
-    if t == 'takeoff':
-        return ('takeoff',)
-    if t == 'land':
-        return ('land',)
-    if t.startswith('hover'):
-        m = re.match(r'hover(?:\s+(-?\d+\.?\d*))?', t)
-        return ('hover', float(m.group(1)) if m and m.group(1) else 1.0)
-    if t.startswith('up'):
-        m = re.match(r'up\s+(-?\d+\.?\d*)', t)
-        if m:
-            return ('up', float(m.group(1)))
-    if t.startswith('down'):
-        m = re.match(r'down\s+(-?\d+\.?\d*)', t)
-        if m:
-            return ('down', float(m.group(1)))
-    if t.startswith('orbit'):
-        m = re.match(r'orbit\s*(\d+)?', t)
-        return ('orbit', float(m.group(1)) if m and m.group(1) else 700.0)
-    if t.startswith('goto') or t.startswith('fly to'):
-        m = re.match(r'.*?(?:goto|fly to)\s+(-?\d+\.?\d*)[,\s]+(-?\d+\.?\d*)(?:[,\s]+(-?\d+\.?\d*))?', t)
-        if m:
-            z = float(m.group(3)) if m.group(3) else None
-            return ('goto', float(m.group(1)), float(m.group(2)), z)
-    if t.startswith('move'):
-        m = re.match(r'move\s+(-?\d+\.?\d*)\s+(-?\d+\.?\d*)(?:\s+(-?\d+\.?\d*))?', t)
-        if m:
-            dz = float(m.group(3)) if m.group(3) else 0.0
-            return ('move', float(m.group(1)), float(m.group(2)), dz)
-    if t in ('look', 'scan'):
-        return ('look',)
-    if t in ('view', 'show view', 'camera'):
-        return ('view',)
-    if t == 'help':
-        return ('help',)
-    return ('unknown', t)
 
 
 def print_help():
@@ -175,11 +132,33 @@ def main():
 
     print('Drone world ready.')
     print_help()
+    use_ollama = os.environ.get('USE_OLLAMA', '1') != '0'
+    ollama_model = os.environ.get('OLLAMA_MODEL', 'phi3')
+    print(f'Ollama enabled: {use_ollama}')
+    print(f'Ollama model: {ollama_model}')
+    if debug_enabled():
+        print('Debug logging enabled via DEBUG_DRONE_AGENT=1 or DEBUG_PROMPT_AGENT=1')
+    if not use_ollama or not ollama_model:
+        raise RuntimeError('Ollama parsing is required for drones now. Set USE_OLLAMA=1 and OLLAMA_MODEL.')
 
     try:
+        last_parser = None
         while True:
             text = input('drone> ')
-            cmd = rule_parse(text)
+            local_cmd = parse_local_drone_command(text)
+            if local_cmd is not None:
+                cmd = local_cmd
+                last_parser = 'local'
+            else:
+                cmd = ollama_parse_drone_command(text, ollama_model)
+                if cmd is None:
+                    print('Ollama could not parse the drone command. Check that "ollama serve" is running and the model is installed.')
+                    last_parser = 'ollama-error'
+                    continue
+                last_parser = 'ollama'
+            debug_log('drone_user_input', text)
+            debug_log('drone_selected_parser', last_parser)
+            debug_log('drone_parsed_command', cmd)
 
             if cmd[0] == 'quit':
                 print('Exiting drone controller')
@@ -198,8 +177,9 @@ def main():
                 send_drones_above_nearest_tree(comm, drones)
                 continue
             if cmd[0] == 'takeoff':
+                target_altitude = 900.0 if cmd[1] is None else float(cmd[1])
                 for drone in drones:
-                    drone.takeoff()
+                    drone.takeoff(target_z=target_altitude)
                 continue
             if cmd[0] == 'land':
                 for drone in drones:
@@ -239,7 +219,7 @@ def main():
                 show_view(comm, blue)
                 continue
 
-            print('Unknown command')
+            print('Unknown command:', cmd[1] if len(cmd) > 1 else '')
 
     except KeyboardInterrupt:
         print('\nInterrupted by user')

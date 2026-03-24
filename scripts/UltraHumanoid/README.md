@@ -1,66 +1,65 @@
 # Ultra Humanoid
 
-Ultra Humanoid is the merged humanoid agent for this repo.
-
-It combines:
-- SimWorld native agent and map classes
-- Ollama-based prompt parsing
-- custom semantic world reasoning
-- direct target navigation
-- depth-guided stopping near objects
-
-## Main File
-
-- [main.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/main.py)
-
-## What It Can Do
-
-- understand prompt-like movement commands
-- go to semantic targets such as nearby buildings, stores, and trees
-- go to coordinates
-- inspect nearby objects with `look`
-- report position and yaw with `status`
-- approach targets directly instead of only stopping at a map node
-- use depth near the end so it stops close to a building or marker surface
-
-## What It Cannot Do Yet
-
-- full obstacle avoidance in complex clutter
-- pure RGB-only semantic perception
-- long multi-step mission planning
-- guaranteed perfect target resolution for every ambiguous prompt
-
 ## Run
 
+From `D:\SimWorld`:
+
 ```powershell
-$env:OLLAMA_MODEL="phi3"
-$env:SIMWORLD_COMPARISON_WORLD="1"
-python scripts\UltraHumanoid\main.py
+powershell -ExecutionPolicy Bypass -File .\scripts\UltraHumanoid\run_ultrahumanoid.ps1
 ```
 
-## Useful Commands
+That launcher will:
 
-- `go to the nearest building`
-- `go to the nearest store`
-- `go to the visible store`
-- `go to the nearest tree`
-- `go to 1200 400`
-- `look`
-- `status`
-- `help`
-- `quit`
+- start `ollama serve` if Ollama is not already running
+- start `SimWorld.exe` if SimWorld is not already running
+- open the empty map
+- wait for you to confirm the world is loaded
+- connect to UnrealCV
+- build the light world from `config/light.yaml`
+- start the ultra humanoid controller
 
-## Main Modules
+## If SimWorld Is Already Open
 
-- [common.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/common.py)
-- [Map/world_model.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Map/world_model.py)
-- [Vision/perception.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Vision/perception.py)
-- [Movement/navigation.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Movement/navigation.py)
-- [Robots/controller.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Robots/controller.py)
+Run the same command:
 
-## Notes
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\UltraHumanoid\run_ultrahumanoid.ps1
+```
 
-This is the best humanoid path to keep improving if you want one combined agent that is closer to what JJ wants for the project.
+It will reuse the existing `SimWorld.exe` window.
 
-The fuller guide is here:
-- [ultra_humanoid.md](/abs/path/d:/SimWorld/scripts/README_files/ultra_humanoid.md)
+## Important Prompt
+
+When you see:
+
+```text
+Loaded? [Enter/1]:
+```
+
+press `Enter` or type `1`, then press `Enter`.
+
+## Commands
+
+Examples:
+
+```text
+go to the nearest building
+go to the nearest store
+go to the visible store
+go to the nearest tree
+go to 1200 400
+look
+status
+help
+quit
+```
+
+## Files
+
+- main entry: `scripts/UltraHumanoid/main.py`
+- launcher: `scripts/UltraHumanoid/run_ultrahumanoid.ps1`
+- common helpers: `scripts/UltraHumanoid/common.py`
+- world model: `scripts/UltraHumanoid/Map/world_model.py`
+- movement: `scripts/UltraHumanoid/Movement/navigation.py`
+- vision: `scripts/UltraHumanoid/Vision/perception.py`
+- controller: `scripts/UltraHumanoid/Robots/controller.py`

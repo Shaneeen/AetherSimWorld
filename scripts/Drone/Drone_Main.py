@@ -38,22 +38,6 @@ except Exception as e:
     startup_log(f'SimWorld import failed: {type(e).__name__}: {e}')
     raise
 
-try:
-    import airsim
-except Exception:
-    airsim = None
-
-
-def check_airsim_connection():
-    if airsim is None:
-        return False, 'airsim package not importable'
-    try:
-        client = airsim.MultirotorClient()
-        client.confirmConnection()
-        return True, 'AirSim RPC connected'
-    except Exception as e:
-        return False, f'AirSim RPC unavailable: {e}'
-
 
 def print_help():
     print('Commands:')
@@ -121,9 +105,6 @@ def main():
 
     drone_map.setup_world(comm)
 
-    airsim_ok, airsim_message = check_airsim_connection()
-    print(airsim_message)
-
     blue = DroneBlue(comm, position=Vector(0, 0), z_height=900.0)
     red = DroneRed(comm, position=Vector(250, 0), z_height=900.0)
     blue.spawn()
@@ -168,7 +149,6 @@ def main():
                 continue
             if cmd[0] == 'status':
                 print('Status:')
-                print(f' - AirSim connected: {airsim_ok}')
                 for drone in drones:
                     pos, yaw, z = get_actor_pose(comm, drone.name)
                     print(f' - {drone.name}: pos={pos}, yaw={yaw:.1f}, z={z:.1f}')

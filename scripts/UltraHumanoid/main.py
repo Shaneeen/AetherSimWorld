@@ -3,9 +3,12 @@ import os
 import sys
 import time
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from scripts.UltraHumanoid.common import (
     DEFAULT_UNREALCV_PORT,
-    REPO_ROOT,
     debug_enabled,
     debug_log,
     maybe_launch_simworld,
@@ -16,9 +19,6 @@ from scripts.UltraHumanoid.common import (
 )
 from scripts.UltraHumanoid.Movement.navigation import calibrate_walk_speed
 from scripts.UltraHumanoid.Robots.controller import execute_command, print_help
-
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 from simworld.agent.humanoid import Humanoid
 from simworld.communicator.communicator import Communicator

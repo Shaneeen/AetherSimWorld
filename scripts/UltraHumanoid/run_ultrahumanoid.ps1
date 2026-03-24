@@ -52,4 +52,4 @@ $pythonExe = if (Test-Path $preferredPython) {
     "python"
 }
 
-& $pythonExe .\scripts\Drone\Drone_Main.py
+& $pythonExe .\scripts\UltraHumanoid\main.py

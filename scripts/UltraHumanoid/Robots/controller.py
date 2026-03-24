@@ -1,7 +1,12 @@
 from simworld.utils.vector import Vector
 
-from scripts.UltraHumanoid.Map.world_model import get_agent_pose, resolve_target, scan_world
+from scripts.UltraHumanoid.Map.world_model import candidate_key, get_agent_pose, resolve_target, scan_world
 from scripts.UltraHumanoid.Movement.navigation import navigate_direct_to_target
+
+SESSION_STATE = {
+    'last_semantic_target_key': None,
+    'last_semantic_target_name': None,
+}
 
 
 def print_help():
@@ -10,9 +15,59 @@ def print_help():
     print(' - go to the nearest store')
     print(' - go to the visible store')
     print(' - go to the nearest tree')
+    print(' - go to the furthest tree')
+    print(' - go to another tree')
+    print(' - go to a different tree')
+    print(' - walk to 3 different trees')
     print(' - look')
     print(' - status')
     print(' - quit')
+
+
+def _semantic_goto(comm, ucv, hum, cfg, walk_speed, cmd):
+    query = str(cmd.get('query', '')).strip()
+    visible_only = bool(cmd.get('visible_only', False))
+    selector = str(cmd.get('selector', '') or '').strip().lower() or None
+    count = max(1, int(cmd.get('count', 1) or 1))
+    visited_keys = []
+    any_success = False
+
+    for visit_index in range(count):
+        exclude_key = None
+        if selector in ('another', 'different'):
+            if visit_index == 0:
+                previous = SESSION_STATE.get('last_semantic_target_key')
+                exclude_key = [previous] if previous is not None else []
+            else:
+                exclude_key = list(visited_keys)
+
+        target, candidates = resolve_target(
+            comm,
+            hum,
+            cfg,
+            query,
+            visible_only=visible_only,
+            selector=selector,
+            exclude_key=exclude_key,
+        )
+        label = f'Semantic candidates for "{query}"'
+        if count > 1:
+            label += f' [visit {visit_index + 1}/{count}]'
+        print(f'{label}:')
+        for item in candidates[:8]:
+            print(f' - {item["name"]} | {item["category"]} | {item["distance"]:.1f} cm | angle={item["relative_angle"]:.1f}')
+        if target is None:
+            print('No matching target found.')
+            return any_success or count == 0
+
+        ok, remaining = navigate_direct_to_target(comm, ucv, hum, target, walk_speed)
+        target_key = candidate_key(target)
+        SESSION_STATE['last_semantic_target_key'] = target_key
+        SESSION_STATE['last_semantic_target_name'] = target['name']
+        visited_keys.append(target_key)
+        print(f'Target {target["name"]}: success={ok}, remaining={remaining:.1f} cm')
+        any_success = any_success or ok
+    return True
 
 
 def execute_command(comm, ucv, hum, cfg, walk_speed, cmd):
@@ -37,18 +92,19 @@ def execute_command(comm, ucv, hum, cfg, walk_speed, cmd):
         ok, remaining = navigate_direct_to_target(comm, ucv, hum, target, walk_speed)
         print(f'Coordinate navigation complete: success={ok}, remaining={remaining:.1f} cm')
         return True
-    if action == 'semantic_goto':
-        query = str(cmd.get('query', '')).strip()
-        visible_only = bool(cmd.get('visible_only', False))
-        target, candidates = resolve_target(comm, hum, cfg, query, visible_only=visible_only)
-        print(f'Semantic candidates for "{query}":')
-        for item in candidates[:8]:
-            print(f' - {item["name"]} | {item["category"]} | {item["distance"]:.1f} cm | angle={item["relative_angle"]:.1f}')
-        if target is None:
-            print('No matching target found.')
+    if action == 'sequence':
+        steps = cmd.get('steps', [])
+        if not isinstance(steps, list) or not steps:
+            print('Sequence command has no steps.')
             return True
-        ok, remaining = navigate_direct_to_target(comm, ucv, hum, target, walk_speed)
-        print(f'Target {target["name"]}: success={ok}, remaining={remaining:.1f} cm')
+        for index, step in enumerate(steps, start=1):
+            print(f'Executing sequence step {index}/{len(steps)}...')
+            keep_running = execute_command(comm, ucv, hum, cfg, walk_speed, step)
+            if not keep_running:
+                return False
+        return True
+    if action == 'semantic_goto':
+        _semantic_goto(comm, ucv, hum, cfg, walk_speed, cmd)
         return True
     print(f'Unknown command: {cmd}')
     return True

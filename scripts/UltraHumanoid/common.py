@@ -1,6 +1,7 @@
 from pathlib import Path
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -115,11 +116,9 @@ def parse_local_command(text: str):
         return {'action': 'status'}
     if lowered in ('look', 'scan'):
         return {'action': 'look'}
-    if lowered.startswith('go to ') or lowered.startswith('walk to ') or lowered.startswith('find '):
-        query = lowered.replace('walk to ', '').replace('go to ', '').replace('find ', '', 1).strip()
-        visible_only = 'visible' in query
-        if any(token in query for token in ('building', 'store', 'shop', 'tree', 'trash', 'bin', 'marker')):
-            return {'action': 'semantic_goto', 'query': query, 'visible_only': visible_only}
+    match = re.fullmatch(r'(?:go to|walk to)\s+(-?\d+(?:\.\d+)?)\s+(-?\d+(?:\.\d+)?)', lowered)
+    if match:
+        return {'action': 'goto', 'x': float(match.group(1)), 'y': float(match.group(2))}
     return None
 
 
@@ -128,14 +127,25 @@ def parse_ollama_command(text: str, model: str):
     system = (
         "You are a command parser for an ultra humanoid in SimWorld. "
         "Reply with exactly one JSON object and no markdown. "
-        "Allowed actions are: semantic_goto, goto, look, status, help, quit, unknown. "
-        "Use semantic_goto for nearest/visible object queries like building, store, tree, trash. "
+        "Allowed actions are: semantic_goto, goto, look, status, help, quit, sequence, unknown. "
+        "Use semantic_goto for nearest/visible/farthest/another/different object queries like building, store, tree, trash. "
         "Use goto for numeric coordinates. "
+        "Use sequence for multi-step requests such as visiting several different objects. "
         "Schemas: "
-        "{\"action\":\"semantic_goto\",\"query\":\"nearest building\",\"visible_only\":false}. "
+        "{\"action\":\"semantic_goto\",\"query\":\"nearest building\",\"visible_only\":false,\"selector\":\"nearest\",\"count\":1}. "
+        "Valid selector values are nearest, farthest, another, different. "
+        "\"count\" must be a positive integer and means how many distinct visits to attempt. "
         "{\"action\":\"goto\",\"x\":100,\"y\":200}. "
+        "{\"action\":\"sequence\",\"steps\":[{\"action\":\"semantic_goto\",\"query\":\"tree\",\"selector\":\"different\",\"count\":3}]}. "
         "{\"action\":\"look\"}. {\"action\":\"status\"}. {\"action\":\"help\"}. {\"action\":\"quit\"}. "
-        "{\"action\":\"unknown\",\"raw_text\":\"...\"}."
+        "{\"action\":\"unknown\",\"raw_text\":\"...\"}. "
+        "Examples: "
+        "\"go to the nearest tree\" -> {\"action\":\"semantic_goto\",\"query\":\"tree\",\"visible_only\":false,\"selector\":\"nearest\",\"count\":1}. "
+        "\"go to the furthest tree\" -> {\"action\":\"semantic_goto\",\"query\":\"tree\",\"visible_only\":false,\"selector\":\"farthest\",\"count\":1}. "
+        "\"go to another tree\" -> {\"action\":\"semantic_goto\",\"query\":\"tree\",\"visible_only\":false,\"selector\":\"different\",\"count\":1}. "
+        "\"go to a different tree\" -> {\"action\":\"semantic_goto\",\"query\":\"tree\",\"visible_only\":false,\"selector\":\"different\",\"count\":1}. "
+        "\"walk to 3 different trees\" -> {\"action\":\"semantic_goto\",\"query\":\"tree\",\"visible_only\":false,\"selector\":\"different\",\"count\":3}. "
+        "\"go to the visible store\" -> {\"action\":\"semantic_goto\",\"query\":\"store\",\"visible_only\":true,\"selector\":\"nearest\",\"count\":1}."
     )
     payload = {"model": model, "prompt": f"System:\n{system}\n\nUser:\n{text}\n\nRespond with JSON only.", "stream": False, "format": "json", "options": {"temperature": 0}}
     try:

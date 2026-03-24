@@ -192,6 +192,35 @@ def filter_candidates(results, query: str, visible_only: bool = False):
     return out
 
 
+def candidate_key(item):
+    return (
+        str(item.get('category', '')).lower(),
+        round(float(item.get('world_x', 0.0)), 1),
+        round(float(item.get('world_y', 0.0)), 1),
+    )
+
+
+def dedupe_candidates(candidates):
+    deduped = []
+    seen = set()
+    for item in candidates:
+        key = candidate_key(item)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(item)
+    return deduped
+
+
+def selection_from_query(query: str):
+    lowered = str(query).lower()
+    if any(token in lowered for token in ('furthest', 'farthest', 'furtherest', 'furthermost')):
+        return 'farthest'
+    if any(token in lowered for token in ('another', 'different', 'other')):
+        return 'different'
+    return 'nearest'
+
+
 def normalize_terms(query: str):
     stop = {'go', 'to', 'the', 'nearest', 'closest', 'visible', 'find', 'a', 'an'}
     synonyms = {
@@ -211,7 +240,21 @@ def normalize_terms(query: str):
     return expanded or set(tokens)
 
 
-def resolve_target(comm, hum, cfg, query: str, visible_only: bool = False):
+def resolve_target(comm, hum, cfg, query: str, visible_only: bool = False, selector: str | None = None, exclude_key=None):
     results = scan_world(comm, hum, cfg)
-    candidates = filter_candidates(results, query, visible_only=visible_only)
-    return (candidates[0] if candidates else None), candidates
+    candidates = dedupe_candidates(filter_candidates(results, query, visible_only=visible_only))
+    selector = str(selector or selection_from_query(query)).lower()
+    filtered = candidates
+    if isinstance(exclude_key, (list, tuple, set)):
+        excluded = set(exclude_key)
+    elif exclude_key is None:
+        excluded = set()
+    else:
+        excluded = {exclude_key}
+    if excluded and selector in ('another', 'different'):
+        filtered = [item for item in candidates if candidate_key(item) not in excluded]
+    if not filtered:
+        return None, candidates
+    if selector in ('farthest', 'furthest'):
+        return filtered[-1], candidates
+    return filtered[0], candidates

@@ -1,21 +1,18 @@
 # Ultra Humanoid
 
-## What It Is
+## What It Does
 
-Ultra Humanoid is the merged humanoid agent path for this project.
+Ultra Humanoid is the main prompt-driven humanoid controller in this repo.
 
-It combines:
-- SimWorld native agent and map classes
-- Ollama-based prompt parsing
-- custom semantic target lookup
-- direct coordinate navigation
-- depth-guided final approach near objects
+It starts a SimWorld humanoid, reads typed commands, turns those commands into structured actions, scans the simulator for nearby objects, chooses a matching target, and walks the humanoid to it. For the last part of the approach, it uses depth data so the agent stops near the visible surface of an object instead of just aiming at a center point.
 
-This is the current "best combined" humanoid path when you want:
-- natural-language control
-- semantic targets like `nearest building` or `visible store`
-- cleaner architecture than the older custom script alone
-- better final stopping than the native map-node planner alone
+In practice, this is the repo's merged humanoid path:
+- native `Humanoid`, `Map`, `Communicator`, and UnrealCV integration from SimWorld
+- local command parsing for common shortcuts
+- Ollama-based parsing for broader natural language requests
+- semantic target resolution from simulator object names, metadata, and world JSON
+- direct coordinate navigation with heading correction
+- depth-guided close approach
 
 ## Main Entry
 
@@ -24,94 +21,116 @@ This is the current "best combined" humanoid path when you want:
 ## Folder Layout
 
 - [common.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/common.py)
-  Runtime helpers, SimWorld startup helpers, local command parsing, and Ollama parsing.
+  Startup helpers, environment handling, local command parsing, and Ollama parsing.
 
 - [Map/world_model.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Map/world_model.py)
-  World scanning, metadata lookup, semantic category inference, target ranking, and target-size estimates.
+  World scanning, metadata loading, category inference, semantic filtering, deduping, and target selection.
 
 - [Vision/perception.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Vision/perception.py)
-  Depth helpers for the final approach stage.
+  Depth and mask helpers used during the final approach.
 
 - [Movement/navigation.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Movement/navigation.py)
-  Walk calibration, direct navigation, heading correction, and depth-based stop logic.
+  Walk-speed calibration, heading correction, forward stepping, stuck recovery, and final stopping logic.
 
 - [Robots/controller.py](/abs/path/d:/SimWorld/scripts/UltraHumanoid/Robots/controller.py)
-  Command dispatch and user-facing runtime behavior.
+  Runtime command execution, semantic visit loops, status output, and help text.
 
-## How It Works
+- [run_ultrahumanoid.ps1](/abs/path/d:/SimWorld/scripts/UltraHumanoid/run_ultrahumanoid.ps1)
+  Convenience launcher that starts Ollama if needed and runs the script with common environment settings.
+
+## Runtime Flow
 
 The control loop is:
 
-1. You type a command.
-2. The agent tries a local parser first for common commands.
-3. If needed, it sends the command to Ollama.
-4. The agent resolves a semantic target from world data and metadata.
-5. It walks toward that target directly instead of only going to a nearby map node.
-6. When it gets close, it uses depth to decide when it is close enough to the object surface.
+1. Start or reuse SimWorld if auto-launch is enabled.
+2. Wait for UnrealCV to become available.
+3. Optionally load the comparison world or generate the lightweight world.
+4. Build a SimWorld map and spawn a humanoid at the origin.
+5. Calibrate walk speed with a short forward step.
+6. Read user input from the `ultra>` prompt.
+7. Try the local parser first.
+8. If the command is not a simple built-in command, send it to Ollama for JSON parsing.
+9. Execute the resulting action.
 
-That last step is important.
+## Supported Behaviors
 
-Ultra Humanoid does not only stop by guessing a center-point radius anymore. It now uses depth as the main final-approach signal, with size-based distance kept as a fallback safety rule.
+Ultra Humanoid currently supports:
 
-## What It Can Do
+- `help`, `status`, `look`, and `quit`
+- direct coordinate movement such as `go to 1200 400`
+- semantic movement such as `go to the nearest tree`
+- visible-only semantic movement such as `go to the visible store`
+- farthest-target selection such as `go to the furthest tree`
+- different-target selection such as `go to another tree`
+- repeated semantic visits such as `walk to 3 different trees`
+- multi-step sequences when Ollama returns a `sequence` action
 
-- Parse common navigation prompts locally or through Ollama.
-- Go to coordinate targets.
-- Go to semantic targets like:
-  - `go to the nearest building`
-  - `go to the nearest store`
-  - `go to the visible store`
-  - `go to the nearest tree`
-- Scan nearby world objects and print what it sees from simulator metadata.
-- Use SimWorld's native `Humanoid` and `Map` classes.
-- Walk directly toward selected targets.
-- Use depth in the final approach so it stops near the object surface instead of only aiming for the object center.
-- Work in the custom comparison block world or the generated lightweight world.
+## How Semantic Navigation Works
 
-## What It Cannot Do Yet
+When you ask for something like `nearest building` or `visible store`, Ultra Humanoid:
 
-- It is not a full real-world robotics stack.
-- It does not do true visual object detection from RGB alone.
-- Most semantic understanding still comes from simulator object lists, names, and metadata.
-- It does not yet do strong obstacle avoidance in cluttered scenes.
-- It does not yet guarantee the perfect target choice for every ambiguous prompt.
-- It does not yet do multi-step planning like:
-  - `go to the store, then turn left and inspect the tree`
-- It does not yet learn from previous runs automatically.
-- It does not yet unify humanoid and drone into one shared agent framework.
+1. Scans simulator objects around the humanoid.
+2. Pulls object location data from UnrealCV.
+3. Loads metadata from:
+   - `data/description_map.json`
+   - `data/ue_assets.json`
+   - `data/bounding_boxes.json`
+4. Loads the active world JSON when available.
+5. Infers categories such as `building`, `store`, `tree`, or `trash`.
+6. Scores candidates by query-term matches.
+7. Applies selector rules such as `nearest`, `farthest`, or `different`.
+8. Chooses one target and walks directly toward it.
 
-## What It Is Especially Good For Right Now
+The `different` and `another` logic also tracks the last semantic target so repeated commands can avoid picking the same object again.
 
-- JJ-style prompt-agent demos
-- comparing semantic target behavior against native SimWorld logic
-- testing `nearest` versus `visible` target behavior
-- evaluating whether depth-guided close approach feels better than graph-node stopping
-- building the next main agent path for the project
+## How Navigation Works
 
-## What Makes It Better Than The Earlier Two
+Navigation is direct, not just graph-node based.
 
-Compared with the older custom humanoid:
-- cleaner separation of concerns
-- better reuse of SimWorld-native structures
-- better final stopping behavior near target surfaces
+The controller repeatedly:
+- reads the humanoid pose
+- computes angle error to the target
+- rotates if the heading is off
+- steps forward for a computed duration
+- checks for low-progress situations and performs small recovery turns
 
-Compared with the native experimental humanoid:
-- better semantic target selection for your prompts
-- direct approach toward the actual target marker or object
-- less dependence on stopping at an unrelated nearby map node
+The walk speed is calibrated at startup, so the duration of each forward step is based on measured movement instead of a fixed guess alone.
 
-## Commands
+## How Depth Is Used
 
-Supported commands include:
+Depth is used mainly in the close-range phase.
+
+When the humanoid is near the target and roughly facing it, Ultra Humanoid samples a center crop from the depth image and computes min, median, and mean depth values. If the observed front surface is close enough, the agent stops. If depth is unavailable or not yet useful, it falls back to a size-based standoff distance estimated from metadata and object bounds.
+
+That makes the final stop behavior more practical than stopping only by distance to an object's center.
+
+## Worlds And Startup
+
+`main.py` supports a few startup modes:
+
+- `SIMWORLD_COMPARISON_WORLD=1`
+  Loads the comparison evaluation world.
+
+- `SIMWORLD_GENERATE_WORLD=1`
+  Builds the lightweight generated world.
+
+- `SIMWORLD_AUTO_LAUNCH=1`
+  Starts SimWorld automatically if the UnrealCV port is not already open.
+
+The helper script sets up a common local run with generated-world defaults and starts `ollama serve` if Ollama is not already listening on port `11434`.
+
+## Example Commands
 
 - `go to the nearest building`
 - `go to the nearest store`
 - `go to the visible store`
 - `go to the nearest tree`
+- `go to the furthest tree`
+- `go to another tree`
+- `walk to 3 different trees`
 - `go to 1200 400`
 - `look`
 - `status`
-- `help`
 - `quit`
 
 ## Run
@@ -124,15 +143,15 @@ $env:SIMWORLD_COMPARISON_WORLD="1"
 python scripts\UltraHumanoid\main.py
 ```
 
-If you want the lightweight generated world instead:
+Generated lightweight world:
 
 ```powershell
 $env:OLLAMA_MODEL="phi3"
 $env:SIMWORLD_GENERATE_WORLD="1"
-python scripts\UltraHumanoid\main.py
+python scripts\UltraHumanoid\main.py$
 ```
 
-If SimWorld is not already running:
+Auto-launch SimWorld if needed:
 
 ```powershell
 $env:SIMWORLD_AUTO_LAUNCH="1"
@@ -140,66 +159,25 @@ $env:OLLAMA_MODEL="phi3"
 python scripts\UltraHumanoid\main.py
 ```
 
-## Ollama Notes
-
-Ultra Humanoid uses Ollama for prompt parsing when the command is not handled by the local shortcut parser.
-
-Make sure Ollama is running:
+Or use:
 
 ```powershell
-ollama serve
+powershell -ExecutionPolicy Bypass -File scripts\UltraHumanoid\run_ultrahumanoid.ps1
 ```
 
-And make sure the model exists:
+## Current Limits
 
-```powershell
-ollama pull phi3
-```
+Ultra Humanoid is useful and fairly complete for repo demos, but it is still a project bot rather than a polished autonomous system.
 
-## How Depth Is Used
+Current limits include:
+- semantic matching is driven mostly by simulator metadata and naming, not RGB understanding
+- obstacle avoidance is minimal
+- visibility is approximated mainly from relative angle, not full scene understanding
+- sequence execution is linear and simple
+- success still depends on world layout and target naming quality
 
-Depth is mainly used in the final approach phase.
+## Bottom Line
 
-The agent:
-- navigates toward the target using world coordinates
-- keeps turning to face the target
-- when it is near enough, checks the center depth region
-- stops when the visible front surface is close enough
+Ultra Humanoid is the repo's strongest humanoid path for natural-language navigation right now.
 
-This is better than stopping only by target-center distance because objects have real width and depth in the world.
-
-## Best Testing World
-
-For controlled evaluation, use the comparison block world.
-
-That world gives you:
-- small markers instead of oversized buildings
-- a clear spawn area near the origin
-- spaced-out semantic targets
-- easier debugging for `nearest` and `visible` prompts
-
-Related file:
-- [comparison_world.py](/abs/path/d:/SimWorld/scripts/NativeAgents/comparison_world.py)
-
-## Current Honest Status
-
-Ultra Humanoid is the best humanoid architecture in this repo right now, but it is still a project bot, not a finished product bot.
-
-It is already useful for:
-- prompt-driven navigation demos
-- target-comparison experiments
-- developing the next version of the main agent
-
-But it still needs more tuning if you want it to feel consistently strong in every world:
-- better obstacle handling
-- stronger visible-target scoring
-- better final success criteria
-- more robust close-range depth reasoning
-
-## Recommendation
-
-If you are moving forward with one humanoid path, this should be the one to keep improving.
-
-The older custom humanoid is still useful as a reference.
-The native experimental humanoid is still useful for architecture study.
-But Ultra Humanoid is the best place to merge the strengths of both.
+If the goal is to keep improving one humanoid stack, this is the right place to do it because it already combines prompt parsing, semantic target selection, direct navigation, and depth-aware stopping in one flow.

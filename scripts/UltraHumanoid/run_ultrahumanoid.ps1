@@ -1,8 +1,10 @@
 $env:SIMWORLD_EXE = "D:\Windows\Windows\SimWorld.exe"
 $env:SIMWORLD_MAP_PATH = "/Game/Maps/empty.umap"
-$env:SIMWORLD_AUTO_LAUNCH = "1"
+$env:SIMWORLD_AUTO_LAUNCH = "0"
 $env:SIMWORLD_CONFIG = "config/light.yaml"
-$env:SIMWORLD_GENERATE_WORLD = "1"
+$env:SIMWORLD_REUSE_CURRENT_WORLD = "1"
+$env:SIMWORLD_GENERATE_WORLD = "0"
+$env:SIMWORLD_COMPARISON_WORLD = "0"
 $env:USE_OLLAMA = "1"
 $env:OLLAMA_MODEL = if ($env:OLLAMA_MODEL) { $env:OLLAMA_MODEL } else { "phi3" }
 

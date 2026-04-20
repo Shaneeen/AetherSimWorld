@@ -27,15 +27,17 @@ from simworld.config import Config
 from simworld.map.map import Map
 from simworld.utils.vector import Vector
 
-from scripts.NativeAgents.comparison_world import load_comparison_world
-from scripts.humanoid.movement.humanoid_movement import cleanup_prompt_agent_actors
-from scripts.humanoid.world import generate_lightweight_world
+from scripts.UltraHumanoid.worlds import cleanup_ultra_humanoid_actors, generate_lightweight_world, load_comparison_world
 
 
 def build_map(cfg):
     world_map = Map(cfg)
     world_map.initialize_map_from_file()
     return world_map
+
+
+def reusing_current_world() -> bool:
+    return os.environ.get('SIMWORLD_REUSE_CURRENT_WORLD', '0') == '1'
 
 
 def main():
@@ -51,8 +53,9 @@ def main():
     comm = Communicator(ucv)
     cfg = Config(os.environ.get('SIMWORLD_CONFIG', 'config/light.yaml'))
 
-    cleanup_prompt_agent_actors(comm)
-    time.sleep(0.5)
+    if not reusing_current_world():
+        cleanup_ultra_humanoid_actors(comm)
+        time.sleep(0.5)
 
     if os.environ.get('SIMWORLD_COMPARISON_WORLD', '0') == '1':
         load_comparison_world(comm, cfg)
@@ -94,7 +97,7 @@ def main():
         print('\nInterrupted by user')
     finally:
         try:
-            if cfg.get('manual_scene.clear_on_exit', True):
+            if (not reusing_current_world()) and cfg.get('manual_scene.clear_on_exit', True):
                 comm.clear_env(keep_roads=False)
         except Exception:
             pass

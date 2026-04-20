@@ -1,3 +1,4 @@
+from scripts.UltraHumanoid.common import DEFAULT_STEP_DURATION_SEC, clamp
 from simworld.utils.vector import Vector
 
 from scripts.UltraHumanoid.Map.world_model import candidate_key, get_agent_pose, resolve_target, scan_world
@@ -11,6 +12,7 @@ SESSION_STATE = {
 
 def print_help():
     print('Ultra humanoid commands:')
+    print(' - go to 1200 400')
     print(' - go to the nearest building')
     print(' - go to the nearest store')
     print(' - go to the visible store')
@@ -19,6 +21,8 @@ def print_help():
     print(' - go to another tree')
     print(' - go to a different tree')
     print(' - walk to 3 different trees')
+    print(' - go 5 steps forward')
+    print(' - take 5 steps left')
     print(' - look')
     print(' - status')
     print(' - quit')
@@ -91,6 +95,25 @@ def execute_command(comm, ucv, hum, cfg, walk_speed, cmd):
         target = {'name': 'coordinate_target', 'world_x': float(cmd['x']), 'world_y': float(cmd['y']), 'radius_cm': 80.0}
         ok, remaining = navigate_direct_to_target(comm, ucv, hum, target, walk_speed)
         print(f'Coordinate navigation complete: success={ok}, remaining={remaining:.1f} cm')
+        return True
+    if action == 'manual_move':
+        steps = max(0.1, float(cmd.get('steps', 1.0) or 1.0))
+        direction_name = str(cmd.get('direction', 'forward') or 'forward').strip().lower()
+        direction_map = {
+            'forward': 0,
+            'backward': 1,
+            'left': 2,
+            'right': 3,
+        }
+        direction_code = direction_map.get(direction_name)
+        if direction_code is None:
+            print(f'Unsupported step direction: {direction_name}')
+            return True
+        duration = clamp(steps * DEFAULT_STEP_DURATION_SEC, 0.1, 20.0)
+        print(f'Ultra movement: taking {steps:.1f} step(s) {direction_name} for {duration:.2f}s')
+        comm.humanoid_step_forward(hum.id, duration, direction=direction_code)
+        pos, yaw = get_agent_pose(comm, hum)
+        print(f'Ultra movement complete: position={pos}, yaw={yaw:.1f}')
         return True
     if action == 'sequence':
         steps = cmd.get('steps', [])

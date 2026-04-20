@@ -1,0 +1,8 @@
+source;ros_domain_id.txt
+source;share\simworld_drone_ros\hook\pythonpath.ps1
+source;share\simworld_drone_ros\hook\pythonpath.bat
+source;share\simworld_drone_ros\hook\pythonpath.dsv
+source;ros_domain_id.txt
+source;share\simworld_drone_ros\hook\ament_prefix_path.ps1
+source;share\simworld_drone_ros\hook\ament_prefix_path.bat
+source;share\simworld_drone_ros\hook\ament_prefix_path.dsv

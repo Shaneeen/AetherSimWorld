@@ -40,7 +40,7 @@ class Brain(Node):
     def control_loop(self) -> None:
         cmd = Twist()
 
-        # Very simple demo brain:
+        # Very simple demo brain:ros2 topic pub --once /sim/control std_msgs/msg/String "{data: start_a}"
         # move forward until x > 10, then turn
         if self.mode == "forward":
             cmd.linear.x = 2.0

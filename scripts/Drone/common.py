@@ -15,8 +15,8 @@ if str(REPO_ROOT) not in sys.path:
 
 STARTUP_LOG_PATH = REPO_ROOT / 'logs' / 'drone_main_startup.log'
 DEFAULT_OLLAMA_TIMEOUT_SEC = 60.0
-DEFAULT_SIMWORLD_EXE = r"D:\Windows\Windows\SimWorld.exe"
-DEFAULT_SIMWORLD_MAP = "/Game/Maps/empty.umap"
+DEFAULT_SIMWORLD_EXE = r"D:\UESimWorld\SimWorld\Windows\SimWorld.exe"
+DEFAULT_SIMWORLD_MAP = "/Game/Maps/DroneArenaV1"
 DEFAULT_UNREALCV_PORT = 9000
 
 

@@ -92,7 +92,7 @@ class ChaserBrain(Node):
         self.current_heading_y = 0.0
         self.cached_tactic = "chase_direct"
         self.cached_tactic_at = 0.0
-        self.pending_ollama_erro r = None
+        self.pending_ollama_error = None
         self.ollama_executor = ThreadPoolExecutor(max_workers=1)
         self.ollama_future = None
         self.last_ollama_request_at = 0.0

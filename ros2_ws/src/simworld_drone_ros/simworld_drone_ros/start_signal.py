@@ -10,7 +10,8 @@ class StartSignal(Node):
     def __init__(self, command: str) -> None:
         super().__init__("start_signal")
         self.command = command
-        self.pub = self.create_publisher(String, "/sim/control", 10)
+        self.target_pub = self.create_publisher(String, "/drone_a/control", 10)
+        self.chaser_pub = self.create_publisher(String, "/drone_b/control", 10)
 
     def send(self) -> None:
         msg = String()
@@ -18,7 +19,8 @@ class StartSignal(Node):
         # Small delay so DDS discovery can settle before we publish.
         time.sleep(0.5)
         for _ in range(3):
-            self.pub.publish(msg)
+            self.target_pub.publish(msg)
+            self.chaser_pub.publish(msg)
             time.sleep(0.2)
         self.get_logger().info(f"Published control command: {self.command}")
 

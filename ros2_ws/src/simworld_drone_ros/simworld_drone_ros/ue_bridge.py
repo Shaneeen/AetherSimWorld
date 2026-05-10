@@ -25,11 +25,20 @@ class UeBridge(Node):
         super().__init__("ue_bridge")
 
         self.status_pub = self.create_publisher(String, "/sim/status", 20)
+        self.legacy_status_pub = self.create_publisher(String, "/drone/status", 20)
+        self.legacy_pose_pub = self.create_publisher(PoseStamped, "/drone/pose", 10)
+        self.legacy_odom_pub = self.create_publisher(Odometry, "/drone/odom", 10)
         self.pose_a_pub = self.create_publisher(PoseStamped, "/drone_a/pose", 10)
         self.pose_b_pub = self.create_publisher(PoseStamped, "/drone_b/pose", 10)
         self.odom_a_pub = self.create_publisher(Odometry, "/drone_a/odom", 10)
         self.odom_b_pub = self.create_publisher(Odometry, "/drone_b/odom", 10)
 
+        self.legacy_cmd_sub = self.create_subscription(
+            Twist,
+            "/drone/cmd_vel",
+            self.cmd_a_callback,
+            10,
+        )
         self.cmd_a_sub = self.create_subscription(
             Twist,
             "/drone_a/cmd_vel",
@@ -51,7 +60,7 @@ class UeBridge(Node):
         self.port = int(os.getenv("SIMWORLD_PORT", "9000"))
         self.drone_asset = os.getenv(
             "SIMWORLD_DRONE_ASSET",
-            "/Game/CityDatabase/blueprints/BP_Box3.BP_Box3_C",
+            "StaticMeshActor",
         )
         self.drone_a_asset = os.getenv(
             "SIMWORLD_DRONE_A_ASSET",
@@ -62,6 +71,7 @@ class UeBridge(Node):
             os.getenv("SIMWORLD_DRONE_ASSET_B", self.drone_asset),
         )
         self.auto_spawn = os.getenv("SIMWORLD_DRONE_AUTO_SPAWN", "1").lower() not in {"0", "false", "no"}
+        self.use_existing = os.getenv("SIMWORLD_USE_EXISTING_DRONES", "0").lower() in {"1", "true", "yes"}
         self.tick_dt = self._read_float_env("SIMWORLD_BRIDGE_DT", 0.1)
 
         default_y = self._read_float_env("SIMWORLD_DRONE_Y", 0.0)
@@ -140,6 +150,7 @@ class UeBridge(Node):
         msg = String()
         msg.data = text
         self.status_pub.publish(msg)
+        self.legacy_status_pub.publish(msg)
         self.get_logger().info(text)
 
     def connect_unrealcv(self) -> None:
@@ -174,7 +185,12 @@ class UeBridge(Node):
 
         result_text = str(result).strip()
         if result_text.lower().startswith("error"):
-            raise RuntimeError(result_text)
+            if "object exists" in result_text.lower():
+                self.publish_status(
+                    f"{label} already exists as {actor['name']}; taking control of existing actor"
+                )
+            else:
+                raise RuntimeError(result_text)
 
         self.client.request(
             f"vset /object/{actor['name']}/location {actor['x']} {actor['y']} {actor['z']}"
@@ -217,16 +233,41 @@ class UeBridge(Node):
             )
 
     def spawn_drones_once(self) -> None:
-        if not self.connected or self.spawned or not self.auto_spawn:
+        if not self.connected or self.spawned:
             return
 
         try:
-            self._spawn_named_actor(self.actor_a, "DroneA")
-            self._spawn_named_actor(self.actor_b, "DroneB")
+            if self.use_existing:
+                self._adopt_existing_actor(self.actor_a, "DroneA")
+                self._adopt_existing_actor(self.actor_b, "DroneB")
+            elif self.auto_spawn:
+                self._spawn_named_actor(self.actor_a, "DroneA")
+                self._spawn_named_actor(self.actor_b, "DroneB")
+            else:
+                return
             self.spawned = True
             self.publish_status("UE bridge ready")
         except Exception as exc:
             self.publish_status(f"UE bridge error: spawn failed: {exc}")
+
+    def _adopt_existing_actor(self, actor: dict, label: str) -> None:
+        objects = str(self.client.request("vget /objects")).split()
+        if actor["name"] not in objects:
+            raise RuntimeError(
+                f"{label} existing actor '{actor['name']}' not found. Available drone-like actors: "
+                + ", ".join(name for name in objects if "drone" in name.lower())
+            )
+
+        location = str(self.client.request(f"vget /object/{actor['name']}/location")).strip()
+        parts = location.split()
+        if len(parts) >= 3:
+            actor["x"] = float(parts[0])
+            actor["y"] = float(parts[1])
+            actor["z"] = float(parts[2])
+        self._apply_actor_color(actor)
+        self.publish_status(
+            f"{label} adopted existing actor {actor['name']} at x={actor['x']:.1f}, y={actor['y']:.1f}, z={actor['z']:.1f}"
+        )
 
     def _publish_pose(self, actor: dict, publisher: any, frame_id: str) -> None:
         msg = PoseStamped()
@@ -294,8 +335,10 @@ class UeBridge(Node):
             self._apply_actor_color(self.actor_a)
             self._apply_actor_color(self.actor_b)
         self._publish_pose(self.actor_a, self.pose_a_pub, "drone_a")
+        self._publish_pose(self.actor_a, self.legacy_pose_pub, "drone")
         self._publish_pose(self.actor_b, self.pose_b_pub, "drone_b")
         self._publish_odom(self.actor_a, self.odom_a_pub, "drone_a")
+        self._publish_odom(self.actor_a, self.legacy_odom_pub, "drone")
         self._publish_odom(self.actor_b, self.odom_b_pub, "drone_b")
 
 

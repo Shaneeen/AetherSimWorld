@@ -12,12 +12,20 @@ class StartSignal(Node):
         self.command = command
         self.target_pub = self.create_publisher(String, "/drone_a/control", 10)
         self.chaser_pub = self.create_publisher(String, "/drone_b/control", 10)
+        self.reset_pub = self.create_publisher(String, "/sim/reset_chase", 10)
 
     def send(self) -> None:
         msg = String()
         msg.data = self.command
         # Small delay so DDS discovery can settle before we publish.
         time.sleep(0.5)
+        if self.command in {"reset", "reset_chase", "randomize", "randomize_start"}:
+            for _ in range(3):
+                self.reset_pub.publish(msg)
+                time.sleep(0.2)
+            self.get_logger().info(f"Published chase reset command: {self.command}")
+            return
+
         for _ in range(3):
             self.target_pub.publish(msg)
             self.chaser_pub.publish(msg)

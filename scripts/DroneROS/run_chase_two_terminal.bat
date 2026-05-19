@@ -15,6 +15,11 @@ if "%CHASER_SPEED%"=="" set CHASER_SPEED=260
 
 set CATCH_DISTANCE=%5
 if "%CATCH_DISTANCE%"=="" set CATCH_DISTANCE=120
+set OLLAMA_MODEL=gpt-oss:latest
+set OLLAMA_API_URL=http://10.8.0.132:11434/api/generate
+set OLLAMA_OPENAI_URL=http://10.8.0.132:11434/v1
+set OLLAMA_TIMEOUT_SEC=20
+set OLLAMA_NUM_PREDICT=512
 
 echo [run] Preparing ROS environment...
 cd /d C:\pixi_ws || goto :fail
@@ -28,13 +33,15 @@ echo [run]   Move seconds:   %MOVE_SEC%
 echo [run]   Rest seconds:   %REST_SEC%
 echo [run]   Chaser speed:   %CHASER_SPEED%
 echo [run]   Catch distance: %CATCH_DISTANCE%
+echo [run]   Ollama model:   %OLLAMA_MODEL%
+echo [run]   Ollama API:     %OLLAMA_API_URL%
 
 echo.
 echo [run] Starting target brain window...
-start "Target Brain" cmd /k "cd /d C:\pixi_ws && call C:\pixi_ws\ros2-windows\local_setup.bat && call D:\SimWorld\ros2_ws\install\local_setup.bat && set SIM_TARGET_SPEED=%TARGET_SPEED% && set SIM_TARGET_MOVE_SEC=%MOVE_SEC% && set SIM_TARGET_REST_SEC=%REST_SEC% && echo [target] launching target_brain && ros2 run simworld_drone_ros target_brain"
+start "Target Brain" cmd /k "cd /d C:\pixi_ws && call C:\pixi_ws\ros2-windows\local_setup.bat && call D:\SimWorld\ros2_ws\install\local_setup.bat && set USE_OLLAMA=1 && set OLLAMA_MODEL=%OLLAMA_MODEL% && set SIM_TARGET_OLLAMA_MODEL=%OLLAMA_MODEL% && set OLLAMA_API_URL=%OLLAMA_API_URL% && set OLLAMA_API_URLS=%OLLAMA_API_URL% && set SIM_TARGET_OLLAMA_API_URL=%OLLAMA_API_URL% && set OLLAMA_OPENAI_URL=%OLLAMA_OPENAI_URL% && set OLLAMA_TIMEOUT_SEC=%OLLAMA_TIMEOUT_SEC% && set SIM_TARGET_OLLAMA_NUM_PREDICT=%OLLAMA_NUM_PREDICT% && set SIM_TARGET_SPEED=%TARGET_SPEED% && set SIM_TARGET_CRUISE_SPEED=%TARGET_SPEED% && set /A SIM_TARGET_EVADE_SPEED=%TARGET_SPEED%+45 && set /A SIM_TARGET_BURST_SPEED=%TARGET_SPEED%+115 && set SIM_TARGET_MOVE_SEC=%MOVE_SEC% && set SIM_TARGET_REST_SEC=%REST_SEC% && echo [target] launching target_brain with %OLLAMA_API_URL% && ros2 run simworld_drone_ros target_brain"
 
 echo [run] Starting chaser brain window...
-start "Chaser Brain" cmd /k "cd /d C:\pixi_ws && call C:\pixi_ws\ros2-windows\local_setup.bat && call D:\SimWorld\ros2_ws\install\local_setup.bat && set SIM_CHASER_SPEED=%CHASER_SPEED% && set SIM_CATCH_DISTANCE=%CATCH_DISTANCE% && echo [chaser] launching chaser_brain && ros2 run simworld_drone_ros chaser_brain"
+start "Chaser Brain" cmd /k "cd /d C:\pixi_ws && call C:\pixi_ws\ros2-windows\local_setup.bat && call D:\SimWorld\ros2_ws\install\local_setup.bat && set USE_OLLAMA=1 && set OLLAMA_MODEL=%OLLAMA_MODEL% && set SIM_CHASER_OLLAMA_MODEL=%OLLAMA_MODEL% && set OLLAMA_API_URL=%OLLAMA_API_URL% && set OLLAMA_API_URLS=%OLLAMA_API_URL% && set SIM_CHASER_OLLAMA_API_URL=%OLLAMA_API_URL% && set OLLAMA_OPENAI_URL=%OLLAMA_OPENAI_URL% && set OLLAMA_TIMEOUT_SEC=%OLLAMA_TIMEOUT_SEC% && set SIM_CHASER_OLLAMA_NUM_PREDICT=%OLLAMA_NUM_PREDICT% && set SIM_CHASER_SPEED=%CHASER_SPEED% && set SIM_CATCH_DISTANCE=%CATCH_DISTANCE% && echo [chaser] launching chaser_brain with %OLLAMA_API_URL% && ros2 run simworld_drone_ros chaser_brain"
 
 echo.
 echo [run] Waiting for the brain nodes to appear...

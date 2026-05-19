@@ -24,6 +24,7 @@ setup(
             "target_brain = simworld_drone_ros.target_brain:main",
             "chaser_brain = simworld_drone_ros.chaser_brain:main",
             "start_signal = simworld_drone_ros.start_signal:main",
+            "chase_watch = simworld_drone_ros.chase_watch:main",
         ],
     },
 )

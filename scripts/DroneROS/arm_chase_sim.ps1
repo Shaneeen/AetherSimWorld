@@ -3,7 +3,9 @@ param(
     [double]$MoveSec = 3,
     [double]$RestSec = 5,
     [double]$ChaserSpeed = 260,
-    [double]$CatchDistance = 120
+    [double]$CatchDistance = 120,
+    [string]$OllamaBaseUrl = "http://10.8.0.132:11434",
+    [string]$OllamaModel = "gpt-oss:latest"
 )
 
 $ErrorActionPreference = "Stop"
@@ -11,10 +13,31 @@ $ErrorActionPreference = "Stop"
 $env:SIMWORLD_HOST = if ($env:SIMWORLD_HOST) { $env:SIMWORLD_HOST } else { "127.0.0.1" }
 $env:SIMWORLD_PORT = if ($env:SIMWORLD_PORT) { $env:SIMWORLD_PORT } else { "9000" }
 $env:SIM_TARGET_SPEED = "$TargetSpeed"
+$env:SIM_TARGET_CRUISE_SPEED = "$TargetSpeed"
+$env:SIM_TARGET_EVADE_SPEED = "$($TargetSpeed + 45)"
+$env:SIM_TARGET_BURST_SPEED = "$($TargetSpeed + 115)"
 $env:SIM_TARGET_MOVE_SEC = "$MoveSec"
 $env:SIM_TARGET_REST_SEC = "$RestSec"
 $env:SIM_CHASER_SPEED = "$ChaserSpeed"
 $env:SIM_CATCH_DISTANCE = "$CatchDistance"
+
+$ollamaRoot = $OllamaBaseUrl.TrimEnd("/")
+$ollamaGenerateUrl = "$ollamaRoot/api/generate"
+$env:USE_OLLAMA = "1"
+$env:OLLAMA_MODEL = $OllamaModel
+$env:SIM_TARGET_OLLAMA_MODEL = $OllamaModel
+$env:SIM_CHASER_OLLAMA_MODEL = $OllamaModel
+$env:OLLAMA_API_URL = $ollamaGenerateUrl
+$env:OLLAMA_API_URLS = $ollamaGenerateUrl
+$env:SIM_TARGET_OLLAMA_API_URL = $ollamaGenerateUrl
+$env:SIM_CHASER_OLLAMA_API_URL = $ollamaGenerateUrl
+$env:OLLAMA_OPENAI_URL = "$ollamaRoot/v1"
+$env:OLLAMA_TIMEOUT_SEC = "20"
+$env:SIM_TARGET_OLLAMA_NUM_PREDICT = "512"
+$env:SIM_CHASER_OLLAMA_NUM_PREDICT = "512"
+$env:SIM_LOS_ENABLED = "1"
+$env:SIM_TARGET_FAKE_OCCLUSION_PROB = "0"
+$env:SIM_CHASER_FAKE_OCCLUSION_PROB = "0"
 $env:PYTHONPATH = "D:\SimWorld;" + $env:PYTHONPATH
 
 $rosSetup = if ($env:ROS_SETUP_PS1) { $env:ROS_SETUP_PS1 } else { "C:\pixi_ws\ros2-windows\local_setup.ps1" }
@@ -59,6 +82,8 @@ try {
 
     Write-Host "Target Brain: $(if ($targetReady) { 'OK' } else { 'NOT READY' })"
     Write-Host "Chaser Brain: $(if ($chaserReady) { 'OK' } else { 'NOT READY' })"
+    Write-Host "Ollama model: $env:OLLAMA_MODEL"
+    Write-Host "Ollama API: $env:OLLAMA_API_URL"
 
     if (-not ($targetReady -and $chaserReady)) {
         Write-Host "Brains failed readiness check. Recent logs:"

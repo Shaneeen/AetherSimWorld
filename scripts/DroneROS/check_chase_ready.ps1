@@ -9,6 +9,21 @@ $env:SIMWORLD_DRONE_A_X = if ($env:SIMWORLD_DRONE_A_X) { $env:SIMWORLD_DRONE_A_X
 $env:SIMWORLD_DRONE_B_X = if ($env:SIMWORLD_DRONE_B_X) { $env:SIMWORLD_DRONE_B_X } else { "-600" }
 $env:SIMWORLD_DRONE_Y = if ($env:SIMWORLD_DRONE_Y) { $env:SIMWORLD_DRONE_Y } else { "0" }
 $env:SIMWORLD_DRONE_Z = if ($env:SIMWORLD_DRONE_Z) { $env:SIMWORLD_DRONE_Z } else { "600" }
+
+$ollamaRoot = "http://10.8.0.132:11434"
+$ollamaGenerateUrl = "$ollamaRoot/api/generate"
+$env:USE_OLLAMA = "1"
+$env:OLLAMA_MODEL = "gpt-oss:latest"
+$env:SIM_TARGET_OLLAMA_MODEL = "gpt-oss:latest"
+$env:SIM_CHASER_OLLAMA_MODEL = "gpt-oss:latest"
+$env:OLLAMA_API_URL = $ollamaGenerateUrl
+$env:OLLAMA_API_URLS = $ollamaGenerateUrl
+$env:SIM_TARGET_OLLAMA_API_URL = $ollamaGenerateUrl
+$env:SIM_CHASER_OLLAMA_API_URL = $ollamaGenerateUrl
+$env:OLLAMA_OPENAI_URL = "$ollamaRoot/v1"
+$env:OLLAMA_TIMEOUT_SEC = "20"
+$env:SIM_TARGET_OLLAMA_NUM_PREDICT = "512"
+$env:SIM_CHASER_OLLAMA_NUM_PREDICT = "512"
 $env:PYTHONPATH = "D:\SimWorld;" + $env:PYTHONPATH
 
 $rosSetup = if ($env:ROS_SETUP_PS1) { $env:ROS_SETUP_PS1 } else { "C:\pixi_ws\ros2-windows\local_setup.ps1" }

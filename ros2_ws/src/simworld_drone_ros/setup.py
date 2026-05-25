@@ -1,11 +1,11 @@
-from setuptools import setup
+from setuptools import find_packages, setup
 
 package_name = "simworld_drone_ros"
 
 setup(
     name=package_name,
     version="0.0.1",
-    packages=[package_name],
+    packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
@@ -19,12 +19,14 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
-            "ue_bridge = simworld_drone_ros.ue_bridge:main",
-            "brain = simworld_drone_ros.brain:main",
-            "target_brain = simworld_drone_ros.target_brain:main",
-            "chaser_brain = simworld_drone_ros.chaser_brain:main",
-            "start_signal = simworld_drone_ros.start_signal:main",
-            "chase_watch = simworld_drone_ros.chase_watch:main",
+            "ue_bridge = simworld_drone_ros.bridge.ue_bridge:main",
+            "brain = simworld_drone_ros.control.brain:main",
+            "target_brain = simworld_drone_ros.duel.target_brain:main",
+            "chaser_brain = simworld_drone_ros.duel.chaser_brain:main",
+            "start_signal = simworld_drone_ros.control.start_signal:main",
+            "chase_watch = simworld_drone_ros.watch.chase_watch:main",
+            "team_coordinator = simworld_drone_ros.team.coordinator:main",
+            "team_drone_controller = simworld_drone_ros.team.drone_controller:main",
         ],
     },
 )

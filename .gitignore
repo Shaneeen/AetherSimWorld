@@ -428,6 +428,7 @@ lib64/
 venv/
 .env/
 .venv/
+.conda/
 
 
 # Sphinx
@@ -449,3 +450,12 @@ docs/source/_static/
 
 # Output
 output*/
+
+# ROS 2 workspace generated files
+ros2_ws/build/
+ros2_ws/install/
+ros2_ws/log/
+
+# Local SimWorld runtime state
+logs/
+scripts/DroneROS/team_match_config.cmd

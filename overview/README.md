@@ -7,6 +7,9 @@ Update these files whenever behavior, scripts, AI prompts, win conditions, or ro
 - `current_phase.md` - where the project is right now.
 - `current_features.md` - what the simulator currently supports.
 - `future_plan.md` - planned phases and milestones.
-- `change_log.md` - short notes for each meaningful change.
+- `LaunchInstructions.md` - how to run the current setup.
+- `change_log.md` - restored as a fresh current-tree change log after the old file was removed from Git history.
 
-Current status: Phase 2B, adding basic 3D altitude movement to the one-vs-one chase baseline.
+Current status: Phase 1, Phase 2A, Phase 2B, and Phase 3 are done for the current scope. The current priority is clean launches, reliable movement, and tuning the team-vs-team behavior.
+
+Important operational note: use `scripts/DroneROS/stop_chase.cmd` before a fresh run. It publishes `stop_all` and cleans known stale source-module and old installed ROS entry-point processes so duplicate brains do not keep publishing conflicting commands.

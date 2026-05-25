@@ -1,71 +1,162 @@
 # Change Log
 
-## 2026-05-20
+## 2026-05-10
 
-- Added bridge-side obstacle/drone collision guards for the UnrealCV direct-location fallback, so drones cannot step through discovered obstacle actors when swept Unreal movement is unavailable.
-- Added `run_bridge_existing.cmd` defaults for obstacle collision discovery (`SIM_OBSTACLE_NAME_PATTERNS=obstacle`, `SIM_OBSTACLE_RADIUS_CM=170`, `SIM_DRONE_COLLISION_RADIUS_CM=70`).
-- Rebuilt the installed ROS package so the old `.cmd` chase flow picks up the 3D `cmd.linear.z` movement code.
-- Added explicit altitude defaults to the old target/chaser brain `.cmd` launchers so up/down movement is visible in normal runs.
-- Reverted the experimental `run_chase_sim.ps1` launcher changes and returned to the old chase start flow: run the existing bridge script, then run `start_chase.cmd`.
-- Fixed `run_chase_sim.ps1` startup on the local Pixi/ROS setup by cleaning inherited Python environment variables, using the matching Pixi Python, loading source modules correctly, and writing per-node logs.
-- Added direct `python -m` entry guards for the ROS bridge, target brain, and chaser brain.
-- Added UnrealCV reconnect retry behavior to the ROS bridge so it can recover when Unreal starts after the chase launcher.
+- Reviewed the existing drone-vs-drone chase setup and identified the main areas to improve: movement control, chase logic, collision handling, watcher logs, and future team-vs-team support.
+- Started documenting the current project structure and separating completed features from future improvements.
+- Created the initial overview documentation structure for current features, current phase, future plan, and change log tracking.
 
-## 2026-05-19
+## 2026-05-11
 
-- Added configurable tag pause behavior through `SIM_TAG_PAUSE_SEC` and `run_chase_sim.ps1 -TagPauseSec`: `-1` pauses forever after tag, `0` disables tag pause, positive values pause for that many seconds.
-- Added basic Phase 2B 3D drone movement: target/chaser brains now publish vertical velocity through `cmd.linear.z`.
-- Added configurable altitude limits with defaults of 100-700 cm and clamped bridge enforcement.
-- Added target climb/dive/level altitude choices under evade/panic pressure.
-- Added chaser altitude following so it pursues target height instead of only x/y position.
-- Changed UE bridge movement to try swept Unreal actor movement before falling back to direct UnrealCV location updates, so level collision can block motion when the runtime supports Unreal Python execution.
+- Reviewed the target and chaser brain behaviour during normal chase runs.
+- Improved the basic chase flow by checking how the target reacts when the chaser is nearby.
+- Began identifying issues where the target would sometimes remain near walls or move in weak escape directions.
+
+## 2026-05-12
+
+- Added early improvements to target escape behaviour so the target avoids moving directly back toward the chaser during close-range encounters.
+- Adjusted random escape behaviour so movement remains unpredictable but is still biased away from danger.
+- Started refining wall and edge behaviour so the target can move back toward the arena centre when near boundaries.
+
+## 2026-05-13
+
+- Added target stuck-detection logic based on actual pose movement compared with commanded movement.
+- Added an `unstuck_reposition` behaviour so the target can attempt to leave wall or corner pockets instead of remaining trapped.
+- Updated compact watcher output to show target actual movement speed and unstuck state for easier debugging.
+
+## 2026-05-14
+
+- Added simple line-of-sight support for the target and chaser brains.
+- Disabled fake random occlusion by default so visibility behaviour is more predictable during testing.
+- Added optional circular LOS blockers through `SIM_LOS_BLOCKERS`.
+- Updated compact watcher output to show visibility lost/regained events.
+
+## 2026-05-15
+
+- Improved chaser behaviour when line of sight is lost so it searches the last known target position instead of relying on perfect target knowledge.
+- Improved Ollama prompts so AI decisions return higher-level strategies with immediate tactics.
+- Updated launch scripts to use the remote Ollama model `gpt-oss:latest`.
+- Added fallback handling when Ollama fails, times out, or returns unusable output.
+
+## 2026-05-16
+
+- Reviewed live chase logs and reduced noisy watcher output.
+- Grouped repeated cached tactics, left/right jukes, and cutoff movements so the compact terminal feed is easier to read.
+- Added detailed saved logs under `logs/chase_watch/`.
+- Added log retention so only the two newest chase detail logs are kept.
+
+## 2026-05-17
+
+- Performed light testing on the chase watcher and target/chaser behaviour.
+- Tuned target unstuck detection thresholds after testing showed that slow wall-pocket movement could avoid the detector.
+- Added clearer watcher status output so future test runs show whether unstuck recovery is active.
 
 ## 2026-05-18
 
-- Split `chase_watch` into a condensed terminal feed plus detailed saved logs under `logs/chase_watch/`.
-- Further reduced terminal watcher noise by grouping cached tactics, left/right jukes, and left/right cutoffs while keeping full detail in saved logs.
-- Added detail log retention so only the two newest chase detail logs are kept.
 - Added target brain reset handling for `/sim/reset_chase` so new rounds clear stale stamina, memory, cached tactics, and unstuck timers.
-- Added early exit from target `unstuck_reposition` when actual movement recovers.
-- Marked Phase 2A as stable enough to move on after live log review.
-- Added future roadmap for Phase 2B basic 3D movement, later obstacle/gate waypoint logic, and height-aware team tactics.
-- Reordered the future roadmap so Phase 2B comes before team-vs-team work and added an easy summary table.
-- Added target stuck-detection startup grace period so reset/start does not immediately force `unstuck_reposition`.
-- Throttled unstuck status output so compact watch is readable during recovery.
+- Added early exit from `unstuck_reposition` when actual movement recovers.
 - Added target proximity detection so nearby chasers override FOV loss and stale memory.
-- Added final separation safety check so target escape/juke/burst headings cannot point back into a close chaser.
-- Tightened target unstuck recovery again after logs showed repeated `actual 0.0 cm/s` without visible `unstucking`.
-- Added explicit unstuck trigger/status output so watcher runs reveal whether recovery is active.
-- Changed target `random_escape` so it is unpredictable but still biased away from the threat instead of allowing pure random flight toward the chaser.
-- Made target edge behavior blend escape headings toward arena center when near boundaries.
-- Made short evasive tactics expire faster so bad jukes/random escapes cannot dominate for several seconds.
-- Tightened target stuck detection thresholds after live testing showed slow wall-pocket movement could avoid the detector.
-- Added target anti-stuck detection based on actual pose movement versus commanded speed.
-- Added `unstuck_reposition` behavior so the target tries to leave wall/corner pockets instead of wandering in place.
-- Updated compact watcher to show target actual movement speed and unstuck state.
-- Added close-range detection so drones do not unrealistically lose sight at very short range unless blocked by an obstacle.
-- Changed target memory behavior so hidden/remembered chaser distance is treated as estimated instead of perfect live perception.
-- Reset chaser heat timer on chase start so heat does not jump from idle time before the round.
-- Made overheated chaser behavior prefer pressure over repeated intercept/finish commits.
-- Changed burst tactic fallback so unavailable burst degrades into a juke instead of pretending full boost is available.
 - Added target stamina and burst limits so panic/burst escape cannot run freely forever.
-- Added chaser heat limits so intercept/cutoff/finish pressure has a cost.
-- Updated compact watcher summaries so visibility distance refreshes during normal target/chaser updates instead of only on lost/regained events.
-- Added `overview/` documentation folder.
-- Documented current phase as Phase 2A.
-- Documented current features, limitations, and future roadmap.
-- Added simple line-of-sight support to the target and chaser brains.
-- Disabled fake random occlusion by default.
-- Added optional circular LOS blockers through `SIM_LOS_BLOCKERS`.
-- Updated compact watcher to show visibility lost/regained events.
-- Improved AI prompts so Ollama chooses higher-level strategies plus immediate tactics.
-- Changed chaser behavior so it searches after losing sight instead of using perfect target knowledge.
-- Updated launch scripts to use remote Ollama model `gpt-oss:latest` at `http://10.8.0.132:11434/api/generate`.
+- Added chaser heat limits so intercept, cutoff, and finish pressure have a cost.
+- Marked Phase 2A as stable enough to move on after live log review.
+- Added the future roadmap for Phase 2B basic 3D movement, later obstacle/gate waypoint logic, and height-aware team tactics.
 
-## Update Rule
+## 2026-05-19
 
-Whenever a feature changes, update:
-- `current_features.md` for what exists now.
-- `current_phase.md` if project status changes.
-- `future_plan.md` if the roadmap changes.
-- this file with a short dated note.
+- Added configurable tag pause behaviour through `SIM_TAG_PAUSE_SEC` and `run_chase_sim.ps1 -TagPauseSec`.
+- Added basic Phase 2B 3D drone movement, allowing target and chaser brains to publish vertical velocity through `cmd.linear.z`.
+- Added configurable altitude limits with default bounds of 100-700 cm.
+- Added bridge-side altitude clamping to enforce the configured flight height.
+- Added target climb, dive, and level altitude choices under evade and panic pressure.
+- Added chaser altitude-following behaviour so it pursues the target height instead of only moving in x/y.
+- Updated UE bridge movement to try swept Unreal actor movement before falling back to direct UnrealCV location updates.
+
+## 2026-05-20
+
+- Added first live team support mode.
+- Updated the bridge to load saved team sizes and map `DroneA`/`DroneB` to `red_1`/`blue_1`.
+- Added support drone spawning up to 3v3.
+- Added `team_drone_controller` and `run_team_support.cmd` so non-primary support drones can move with team role/formation behaviour.
+- Updated start/stop signaling so team support starts and stops with the normal chase controls.
+- Added team match setup tooling for red/blue drone counts and default/manual/AI model-based speed profiles.
+- Saved team match setup to `scripts/DroneROS/team_match_config.cmd`.
+- Updated target/chaser launch scripts to reuse selected red/blue speed profiles when a saved team config exists.
+- Added `clear_team_match_config.cmd` to return to individual drone speed prompts.
+- Restructured the ROS source package into `bridge`, `duel`, `control`, `watch`, and `team` folders with compatibility wrappers.
+- Added a Phase 3 `team_coordinator` scaffold for future red-vs-blue role assignment.
+
+## 2026-05-21
+
+- Continued testing the team-vs-team setup flow.
+- Updated compact watcher output for team bridge/support readiness.
+- Tuned chaser balance defaults from 240/270/170 cm/s to 260/300/200 cm/s.
+- Exposed `SIM_CHASER_PRESSURE_SPEED_SCALE` at 0.78 so pressure mode is less sluggish.
+- Raised default chase catch distance from 120 cm to 160 cm so visually close passes register more reliably.
+- Guarded chaser `orbit_pincer` so Ollama cannot keep using it when the target is moving normally or outside orbit range.
+
+## 2026-05-22
+
+- Added bridge-side obstacle and drone collision guards for the UnrealCV direct-location fallback.
+- Added software checks so drones cannot step through discovered obstacle actors when swept Unreal movement is unavailable.
+- Added `run_bridge_existing.cmd` defaults for obstacle collision discovery.
+- Broadened default software obstacle discovery names to include wall, building, barrier, blocker, and mesh.
+- Added chaser `encircle_stalled:orbit_pincer` behaviour so a visible stalled or slow target at mid range can be circled and closed down instead of only direct-chased.
+- Exposed tuning knobs for stalled-target orbit behaviour.
+
+## 2026-05-23
+
+- Split team support runtime by side.
+- Updated `run_team_support.cmd` to start separate red/blue coordinators and separate red/blue support controllers.
+- Scoped `team_drone_controller` by `SIM_TEAM` so each side only commands its own support drones.
+- Fixed scoped team support pose awareness so each side watches both teams' poses while only commanding its own drones.
+- Expanded red support roles to include screen, decoy, hide, and bait.
+- Expanded blue support roles to include flanker, pressure screen, cutoff, and support.
+- Added support intent logs so chase logs show why a support drone is moving.
+- Changed team-mode catch detection to primary-only by default so support drones can screen or decoy without instantly ending the round.
+- Added shared match rules code in `team/match_rules.py`.
+- Added red-elimination round mode where caught red drones drop to the ground and the bridge resets once all red drones are caught.
+- Added a short red-elimination grace window to avoid immediate removal during round setup.
+- Added stale team process cleanup to `run_team_support.cmd` and `stop_chase.cmd`.
+
+## 2026-05-24
+
+- Performed lighter weekend testing on team support and red-elimination behaviour.
+- Tuned support movement goals into wider team lanes so support drones do not clump too closely.
+- Adjusted red screen, decoy, and outlet positions so they separate more clearly from the runner.
+- Adjusted blue support positioning for pincer, screen-clear, and center-denial roles.
+- Reduced target vertical bounce by lowering launcher altitude defaults and adding a short altitude tactic hold before random climb/dive choices can flip again.
+- Added inactive manual drone parking so unused drones in smaller matches are moved away from the chase area.
+- Updated launch instructions to keep the compact terminal flow as the main runnable path.
+
+## 2026-05-25
+
+- Added a bridge-side arena boundary guard for direct UnrealCV movement so drones stay inside the configured arena wall even when Unreal swept collision is unavailable.
+- Updated target/chaser launch bounds to match the bridge arena guard.
+- Made target wall-contact unstuck trigger more quickly when movement slows against the boundary.
+- Fixed `stop_chase.cmd` cleanup to also kill stale installed ROS console entry points such as `chaser_brain.exe` and `chaser_brain-script.py`.
+- Fixed red-elimination ground drops so eliminated drones can use `SIM_TEAM_ELIMINATION_GROUND_Z=0` instead of being clamped back to normal flight altitude.
+- Fixed red-elimination team mode so the bridge no longer ignores primary duel-brain movement commands by default.
+- Changed red-elimination scoring so support red drones are eliminated first, while `red_1` remains the live runner until it is the last active red.
+- Added and then disabled direct-placement fallback by default with `SIMWORLD_DIRECT_ON_SWEEP_BLOCK=0` so real swept wall collision is not bypassed.
+- Updated `stop_chase.cmd` to kill stale bridge, target brain, chaser brain, and team support Python processes.
+- Changed target/chaser launch scripts to run source modules directly with `python -m` to avoid stale installed console entry points.
+- Added bridge startup movement-config status output showing primary-command ignore, swept movement, direct fallback, round mode, and catch mode.
+- Rebalanced white support pressure so support drones distribute across active red support targets.
+- Added a blue support search role for blocked runner sight so support drones split into separate search lanes instead of stacking on one point.
+- Added shared tactical geometry utilities for circular blocker LOS checks, route-around shoulder waypoints, and cover-point selection.
+- Updated target/chaser duel brains to read tactical, collision, and LOS blockers.
+- Updated team coordinators to watch live team poses and assign support roles based on pressure, screens, and blocked-sight state.
+- Updated support controllers to route around configured blockers, use cover points for red support, clear active screens for blue support, and maintain safer enemy tag spacing.
+- Replaced blocking `ros2 topic pub` calls in `start_chase.cmd` and `stop_chase.cmd` with the existing `start_signal` helper.
+- Restored `start_chase.cmd` to the older direct stop/reset/start launch flow, while keeping bridge/brain checks as non-blocking diagnostics.
+- Changed default team visuals back toward clear red-vs-white distinction.
+- Fixed 4v4/5v5 reset placement so all active support drones receive formation positions.
+- Raised default team-mode start distance so larger formations begin as two separated groups.
+- Published real bridge odometry velocity for all drones so brains no longer see false `actual_speed=0.0`.
+- Hardened team support shutdown so one side does not continue running alone after ROS context invalidation.
+- Fixed a missed-start race where target/chaser brains could stay in `waiting_for_start` while team support moved.
+- Changed start/stop control topics to reliable transient-local QoS and made `start_signal` repeat/linger longer so `start_all` is much harder to miss.
+- Restored the saved team match config to 5v5 after the latest log showed the run had fallen back to 3v3 and parked extra drones as inactive.
+- Reviewed the latest saved chase detail log.
+- Marked Phase 2B and Phase 3 as completed for the current project scope.
+- Marked Phases 4, 5, and 6 as not currently specified and waiting for further instructions.

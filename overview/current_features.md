@@ -2,173 +2,146 @@
 
 ## Simulation Setup
 
-- SimWorld can spawn and control two drones.
-- ROS bridge publishes drone pose and accepts velocity commands.
-- ROS bridge enforces drone altitude bounds before applying movement:
-  - default minimum Z: 100 cm
-  - default maximum Z: 700 cm
-  - override with `SIMWORLD_DRONE_MIN_Z` and `SIMWORLD_DRONE_MAX_Z`
-- ROS bridge tries swept Unreal movement for drone position updates so placed wall/obstacle/drone collision can block motion when Unreal Python execution is available.
-- ROS bridge also has a fallback software collision guard for direct UnrealCV location moves:
-  - discovers obstacle-like actors by name, default pattern `obstacle`
-  - supports manual circular blockers with `SIM_COLLISION_BLOCKERS=x,y,radius[,min_z,max_z];...`
-  - prevents DroneA and DroneB from stepping through each other using `SIM_DRONE_COLLISION_RADIUS_CM`
-- Separate brain nodes control each drone:
-  - target brain for the red/evading drone
-  - chaser brain for the blue/white/chasing drone
-- Chase can be started and stopped with command scripts.
-- Start command can randomize fair starting positions before the chase begins.
-- Target brain resets its runtime memory, stamina, cached tactic, and stuck state when the chase is reset or restarted.
-- Tag pause is configurable with `SIM_TAG_PAUSE_SEC` or `run_chase_sim.ps1 -TagPauseSec`:
-  - `-1` pauses both drones forever after a tag
-  - `0` disables tag pause
-  - any positive value pauses both drones for that many seconds
+- SimWorld can run the normal two-drone duel or a saved team match using existing manual drone actors up to 5v5.
+- ROS bridge publishes drone pose/odom and accepts velocity commands.
+- Primary drones:
+  - red_1 / `DroneA` uses the target brain.
+  - blue_1 / `DroneB` uses the chaser brain.
+- Team support drones:
+  - red_2-red_5 default to `DroneA1`-`DroneA4`.
+  - blue_2-blue_5 default to `DroneB1`-`DroneB4`.
+  - unused manual drones are parked near `(2800, 2800, 150)`.
+- The source package is split by responsibility:
+  - `bridge/`
+  - `duel/`
+  - `team/`
+  - `control/`
+  - `watch/`
 
-## AI / Ollama
+## Movement And Collision
 
-- Both target and chaser can use Ollama.
-- Default model is `gpt-oss:latest`.
-- Default remote API is `http://10.8.0.132:11434/api/generate`.
-- Both brains have fallback logic when Ollama fails, times out, or returns unusable output.
-- Ollama output is parsed more flexibly than before:
-  - direct `strategy:tactic`
-  - JSON with `strategy` and `tactic`
-  - short text that includes an allowed tactic
-- AI failures back off before retrying so the sim keeps running.
+- Drones move in x/y/z.
+- Default flight altitude bounds:
+  - minimum Z: `100 cm`
+  - maximum Z: `700 cm`
+- Override with:
+  - `SIMWORLD_DRONE_MIN_Z`
+  - `SIMWORLD_DRONE_MAX_Z`
+- The bridge attempts swept Unreal movement when available.
+- If swept movement is unavailable, direct UnrealCV location updates are used.
+- Direct UnrealCV movement is guarded by software safety rules:
+  - arena bounds default to `SIM_TARGET_BOUND_X=1350`, `SIM_TARGET_BOUND_Y=1350`
+  - arena margin defaults to `SIM_ARENA_BOUNDARY_MARGIN_CM=90`
+  - live drones avoid overlapping each other through `SIM_DRONE_COLLISION_RADIUS_CM`
+  - manual circular blockers can be configured with `SIM_COLLISION_BLOCKERS`
+- Direct placement after a swept block is disabled by default:
+  - `SIMWORLD_DIRECT_ON_SWEEP_BLOCK=0`
+- Bridge startup should print the loaded arena guard.
 
-## Target Brain
+## Team Mode
 
-The target drone can:
+- Team setup scripts can configure red/blue team sizes up to 5v5.
+- `run_team_support.cmd` starts separate red and blue coordinators/controllers.
+- Coordinators watch live poses and assign dynamic roles.
+- Support controllers command only their own side.
+- Red support roles include:
+  - `screen`
+  - `decoy`
+  - `hide`
+  - `bait`
+- Blue support roles include:
+  - `flanker`
+  - `pressure_screen`
+  - `cutoff`
+  - `support`
+  - `search`
+- Blue support can split into search lanes when runner sight is blocked or uncertain.
+- Blue support distributes pressure across active red support drones instead of stacking on one target.
+- Support drones keep spacing from same-team drones.
+- Support drones can use configured blockers for route/cover hints.
 
-- move in x/y/z using vertical velocity commands
-- choose simple altitude tactics:
-  - `level_escape`
-  - `climb_escape`
-  - `dive_escape`
-- flee directly away from the chaser
-- veer left or right
-- juke left or right
-- zigzag
-- burst escape
-- choose random escape headings
-- bias random escape away from the threat and back toward arena center near boundaries
-- safety-check final escape headings so close-range moves cannot intentionally point back into the chaser
-- use memory when the chaser is not currently visible
-- react to threat states:
-  - patrol
-  - evade
-  - panic
-- manage stamina for burst escape:
-  - burst costs stamina
-  - burst drains stamina while active
-  - stamina regenerates outside burst
-  - exhausted target speed is reduced slightly
-- detect when commanded movement is not producing real pose movement
-- run an `unstuck_reposition` maneuver to leave wall/corner pockets
-- cancel `unstuck_reposition` early once real movement resumes
+## Scoring And Rounds
 
-Target AI strategies include:
+- Team catch mode defaults to primary scoring:
+  - `red_1` vs `blue_1`
+- `SIM_TEAM_CATCH_MODE=any` makes nearest red/blue contact score.
+- `SIM_TEAM_ROUND_MODE=red_elimination` runs elimination mode:
+  - support red drones are eliminated before red_1
+  - red_1 remains live until other active red drones are gone
+  - only blue_1 can finish red_1
+  - eliminated red drones drop to `SIM_TEAM_ELIMINATION_GROUND_Z`, default `0`
+  - eliminated red drones are excluded from live drone collision checks
+  - the bridge resets when all active red drones are caught
 
-- `keep_distance`
-- `break_line_of_sight`
-- `reverse_when_overcommitted`
-- `wide_arc_escape`
-- `tempo_change`
-- `force_overshoot`
+## Brains
 
-## Chaser Brain
+Target brain can:
 
-The chaser drone can:
+- flee, veer, juke, zigzag, burst, and random escape
+- use memory when the chaser is not visible
+- react to patrol/evade/panic states
+- manage stamina and burst cooldown
+- choose level/climb/dive altitude tactics
+- detect low actual speed and run `unstuck_reposition`
+- trigger unstuck faster near the arena wall
 
-- move in x/y/z and follow the target's altitude within the configured Z bounds
-- chase directly
-- intercept
-- cutoff left
-- cutoff right
-- apply pressure
-- search last seen position
-- commit to finish/catch behavior near the target
-- stop using perfect target knowledge when line of sight is lost
-- manage heat for high-effort pursuit:
-  - intercept/cutoff/finish behavior builds heat
-  - pressure/search behavior cools heat
-  - overheated chase speed is reduced
+Chaser brain can:
 
-Chaser AI strategies include:
+- chase, intercept, pressure, cutoff left/right, search last seen, and finish near catch range
+- follow target altitude
+- use heat/overheat limits
+- stop using perfect target knowledge when LOS is lost
 
-- `herd_to_boundary`
-- `shadow_until_close`
-- `fake_left_cut_right`
-- `predict_and_camp`
-- `deny_center`
-- `spiral_search`
+Both brains can use Ollama, but fall back to local tactics if Ollama is unavailable or times out.
 
-## Visibility / Line of Sight
+## Visibility And Tactical Blockers
 
-Current LOS is simple geometry, not full Unreal raycast vision yet.
+- LOS is currently simple geometry, not real Unreal raycasts.
+- Checks include:
+  - range
+  - FOV
+  - close-range detection
+  - optional `SIM_LOS_BLOCKERS`
+  - optional `SIM_TACTICAL_BLOCKERS`
+  - `SIM_COLLISION_BLOCKERS` reused as tactical blockers
 
-It checks:
-
-- visible range
-- field of view
-- close-range detection override
-- target proximity/radar-style detection for nearby threats
-- optional circular blockers from `SIM_LOS_BLOCKERS`
-
-Useful environment variables:
-
-- `SIM_LOS_ENABLED=1`
-- `SIM_TARGET_FOV_DEG=220`
-- `SIM_CHASER_FOV_DEG=200`
-- `SIM_LOS_BLOCKERS=x,y,radius;x,y,radius`
-
-Example blocker:
+Example:
 
 ```powershell
-$env:SIM_LOS_BLOCKERS="0,0,450"
+$env:SIM_TACTICAL_BLOCKERS="center_pillar,0,0,450,100,700"
 ```
 
-This creates a circular fake obstacle at map center with radius 450 cm.
+## Watcher And Logs
 
-## Watcher / Compact Logs
+- `start_chase.cmd` can auto-run the compact watcher.
+- Watcher shows:
+  - ready/start/stop
+  - target movement phase
+  - chaser commits
+  - team role intent
+  - visibility lost/regained
+  - catch/elimination events
+  - stamina/boost
+  - heat/thermal state
+  - actual speed and stuck state
+- Detailed logs are saved under `logs/chase_watch/`.
 
-The compact watcher reads `/sim/status` and shows shorter merged updates.
-It also saves a detailed raw/event log under `logs/chase_watch/` and keeps only the two newest detail logs.
-The terminal feed groups noisy repeated states like `[cached]`, left/right jukes, and left/right cutoffs so normal motion does not spam the screen.
+## Process Cleanup
 
-It can show:
+- Start/stop/reset commands use reliable control publishing, with repeated `start_all` delivery to reduce missed-start races.
+- `stop_chase.cmd` publishes `stop_all`.
+- It also cleans stale live/source-module nodes and old installed ROS entry points such as:
+  - `target_brain.exe`
+  - `chaser_brain.exe`
+  - `ue_bridge.exe`
+  - matching `*-script.py` processes
+- This matters because duplicate brains can publish conflicting commands and make drones look frozen or inconsistent.
 
-- brain ready state
-- chase start and stop
-- reset/start distance
-- AI chosen strategy and tactic
-- AI fallback errors
-- target movement phase
-- chaser commits
-- catch zone reached
-- visibility lost/regained events
-- current target stamina/boost state
-- current target actual movement speed and unstuck state
-- current chaser heat/thermal state
-- estimated distance when the target is acting from memory instead of live sight
-- detailed raw `/sim/status` messages in saved log files
+## Current Limitations
 
-Expected examples:
-
-```text
-TARGET: tempo_change -> burst_escape, panic, sees chaser, distance 430 cm
-CHASER: commits spiral_search -> search_last_seen, no sight (fov), distance 900 cm, heat 24.0 (cool)
-CHASER: lost sight of target (fov), distance_cm=900.0
-TARGET: AI fallback - Ollama endpoints failed
-CAUGHT: at 105.4 cm
-```
-
-## Important Current Limitations
-
-- LOS is not yet based on real SimWorld obstacle raycasts.
-- 3D movement is basic altitude control, not full 3D pathfinding.
-- Swept collision depends on Unreal Python being available through the running UnrealCV session; otherwise the bridge falls back to direct location updates.
-- There is no full round manager yet.
-- Scoring is not a proper match system yet.
-- Team-vs-team behavior is not implemented yet.
-- Roles are not dynamic across teams yet because the sim is still one-vs-one.
+- Direct UnrealCV movement cannot use real Unreal mesh collision.
+- Software arena bounds and configured blockers are the current workaround.
+- Full match scoring/timers/summaries are future scope.
+- Support drones do not yet have per-drone stamina/heat.
+- Real Unreal raycast perception is future scope.
+- Automatic map measurement is future scope.

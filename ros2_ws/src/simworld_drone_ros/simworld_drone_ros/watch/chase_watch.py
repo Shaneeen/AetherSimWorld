@@ -1,3 +1,4 @@
+import os
 import re
 import time
 from datetime import datetime
@@ -23,7 +24,7 @@ class ChaseWatch(Node):
         self.summary_timer = self.create_timer(5.0, self.summary_tick)
 
     def _open_detail_log(self):
-        log_dir = Path("D:/SimWorld/logs/chase_watch")
+        log_dir = Path(os.environ.get("SIM_CHASE_WATCH_LOG_DIR", "C:/CodeSimWorld/AetherSimWorld/logs/chase_watch"))
         log_dir.mkdir(parents=True, exist_ok=True)
         path = log_dir / f"chase_detail_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
         existing = sorted(log_dir.glob("chase_detail_*.log"), key=lambda item: item.stat().st_mtime)

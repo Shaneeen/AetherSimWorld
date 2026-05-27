@@ -27,6 +27,7 @@ setup(
             "chase_watch = simworld_drone_ros.watch.chase_watch:main",
             "team_coordinator = simworld_drone_ros.team.coordinator:main",
             "team_drone_controller = simworld_drone_ros.team.drone_controller:main",
+            "team_panel = simworld_drone_ros.panel.team_panel:main",
         ],
     },
 )

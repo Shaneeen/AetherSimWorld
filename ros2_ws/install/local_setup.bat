@@ -62,7 +62,7 @@ goto:eof
     set "_colcon_python_executable=%COLCON_PYTHON_EXECUTABLE%"
   ) else (
     :: use the Python executable known at configure time
-    set "_colcon_python_executable=D:\pixi_ws\.pixi\envs\default\python.exe"
+    set "_colcon_python_executable=C:\pixi_ws\.pixi\envs\default\python.exe"
     :: if it doesn't exist try a fall back
     if not exist "!_colcon_python_executable!" (
       python --version > NUL 2> NUL

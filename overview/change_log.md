@@ -160,3 +160,40 @@
 - Reviewed the latest saved chase detail log.
 - Marked Phase 2B and Phase 3 as completed for the current project scope.
 - Marked Phases 4, 5, and 6 as not currently specified and waiting for further instructions.
+
+## 2026-05-27
+
+- Replaced the older `scripts\DroneROS` runtime path with a cleaner root-level `launch\` command folder.
+- Added `launch\env.cmd` to centralize the Windows ROS/Pixi/Python environment and DLL fixes.
+- Added simple root launch commands for set teams, clear teams, bridge, target, chaser, panel, team support, start, and stop.
+- Fixed the ROS Windows `rclpy` DLL import issue through a `sitecustomize.py` DLL path helper under `launch\ros2_dll_site`.
+- Updated launch instructions so the normal flow is now bridge, target, chaser, panel, and start/stop terminals.
+- Added a Tk-based Drone Team Panel that shows chasers on the top row and targets on the bottom row with five slots each.
+- The panel listens to poses, commands, role topics, and `/sim/status`, then displays compact per-drone action/status text.
+- Added panel pulsing for new actions, role changes, command firing, eliminations, and game-over events.
+- Added `TAGGED` display when a red/target drone is at `z=0`, even if the explicit elimination status line is missed.
+- Reduced panel action/status font sizes and enabled wrapping so movement text is readable instead of clipped.
+- Changed 5v5 mode so team support controls all ten drones, including `red_1`/`DroneA` and `blue_1`/`DroneB`.
+- In 5v5 mode, duel primary commands are ignored so the team controller does not fight target/chaser brain hold commands.
+- Changed 5v5 setup to red-elimination scoring with `SIM_TEAM_CATCH_MODE=any`.
+- Changed elimination behavior so tagged target drones drop to `z=0`, stay down, and stop moving.
+- Changed all-targets-down behavior from automatic reset to game over with `stop_all`.
+- Tuned the 5v5 demo preset for easier visual tagging with `SIM_CATCH_DISTANCE=340`.
+- Tuned the 5v5 demo speed preset so chaser intercept speed is `525` cm/s and target burst speed is `300` cm/s, about `1.75x`.
+- Updated team support launch to start minimized logged support processes instead of unreliable invisible background children.
+- Added stale `team_node.cmd` cleanup to `launch\stop.cmd`.
+- Added team support status reporting for missing poses so frozen support drones can be diagnosed from logs and the panel.
+- Added `launch\new_round.cmd` for starting another round after all targets are tagged without killing the bridge, brains, or panel.
+- Updated team support launch to clean existing team support nodes before relaunching so repeated starts do not stack duplicate controllers.
+- Removed visible x/y/z coordinate repainting from the Drone Team Panel and slowed its refresh to reduce UI overhead.
+- Disabled per-move bridge rotation pushes by default with `SIMWORLD_PUSH_ROTATION=0` to reduce UnrealCV command traffic during 5v5 demos.
+- Loosened 5v5 demo drone spacing/collision settings so support drones are less likely to block each other while commands are active.
+- Hardened `/sim/reset_chase` delivery by using reliable transient-local QoS and repeated reset publishing.
+- Added bridge-side reset debouncing so repeated reset messages only create one new randomized round.
+- Added Ollama-backed 5v5 team coordination using the same `gpt-oss:latest` model and `10.8.0.132:11434` generate endpoint as the 1v1 brains.
+- Team coordinators now request validated per-drone role plans from Ollama and fall back to deterministic live-state roles if Ollama is unavailable.
+- Reduced 5v5 demo catch distance from `340` cm to `220` cm after logs showed tags registering at visually too-far distances around `316-336` cm.
+- Expanded elimination logs with XY distance, Z delta, and active catch radius for easier tag-distance debugging.
+- Reviewed the latest 5v5 chase log and found blue support drones were holding tag spacing from red drones, causing loitering and parallel movement instead of committed attacks.
+- Changed blue team support movement so nearby active red drones trigger a direct commit chase, while red drones still keep evasive spacing.
+- Added `SIM_BLUE_DIRECT_COMMIT_DISTANCE_CM=1200` to the 5v5 preset and ignored downed red drones during blue target search.

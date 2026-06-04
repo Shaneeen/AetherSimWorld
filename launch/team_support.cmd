@@ -14,8 +14,15 @@ if "%SIM_TACTICAL_CLEARANCE_CM%"=="" set "SIM_TACTICAL_CLEARANCE_CM=180"
 if "%SIM_TARGET_BOUND_X%"=="" set "SIM_TARGET_BOUND_X=1350"
 if "%SIM_TARGET_BOUND_Y%"=="" set "SIM_TARGET_BOUND_Y=1350"
 
+if not exist "%ROS_LOG_DIR%" mkdir "%ROS_LOG_DIR%"
+
+echo [team] Cleaning existing team support nodes...
+powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'simworld_drone_ros\.team\.(coordinator|drone_controller)' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>nul
+
 echo [team] Support controllers for red=%SIM_RED_TEAM_SIZE% blue=%SIM_BLUE_TEAM_SIZE%
-start "red_team_coordinator" /b "%ComSpec%" /c call "%~dp0team_node.cmd" red coordinator
-start "blue_team_coordinator" /b "%ComSpec%" /c call "%~dp0team_node.cmd" blue coordinator
-start "red_team_support" /b "%ComSpec%" /c call "%~dp0team_node.cmd" red support
-start "blue_team_support" /b "%ComSpec%" /c call "%~dp0team_node.cmd" blue support
+echo [team] Logs: %ROS_LOG_DIR%\team_*.log
+
+start "red_team_coordinator" /min "%ComSpec%" /c call "%~dp0team_node.cmd" red coordinator ^> "%ROS_LOG_DIR%\team_red_coordinator.log" 2^>^&1
+start "blue_team_coordinator" /min "%ComSpec%" /c call "%~dp0team_node.cmd" blue coordinator ^> "%ROS_LOG_DIR%\team_blue_coordinator.log" 2^>^&1
+start "red_team_support" /min "%ComSpec%" /c call "%~dp0team_node.cmd" red support ^> "%ROS_LOG_DIR%\team_red_support.log" 2^>^&1
+start "blue_team_support" /min "%ComSpec%" /c call "%~dp0team_node.cmd" blue support ^> "%ROS_LOG_DIR%\team_blue_support.log" 2^>^&1

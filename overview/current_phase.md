@@ -12,7 +12,7 @@ Status:
 - Phase 3 is done for current scope: team support up to 5v5 exists with red/blue coordinators, scoped support controllers, dynamic roles, spacing, screen clearing, search lanes, and red-elimination support.
 - Phases 4, 5, and 6 are not committed implementation phases yet. They are future scope.
 
-The strongest baseline remains the primary red_1 vs blue_1 duel brains, with team support layered on top when a saved team config exists.
+The strongest baseline remains the normal duel brain setup for 1v1. The current 5v5 demo preset moves all ten drones through team support so `DroneA`/`DroneB` no longer sit on hold during team matches.
 
 ## Current Direction
 
@@ -20,21 +20,24 @@ Current work is not about reopening Phase 2B or Phase 3. The focus is stability 
 
 - clean process lifecycle
 - no stale duplicate brain nodes
-- reliable source-module launch scripts
+- reliable root-level `launch\` scripts
 - direct UnrealCV movement guards when swept Unreal movement is unavailable
 - better measured arena bounds and blocker configuration
-- readable logs for team-vs-team tests
+- readable logs and panel output for team-vs-team tests
 
 ## Recently Restored / Confirmed
 
 - Launch scripts run source modules with `python -m simworld_drone_ros...` instead of old installed ROS console entry points.
-- `stop_chase.cmd` publishes `stop_all` and cleans stale source-module and old installed entry-point processes such as `chaser_brain.exe` and `chaser_brain-script.py`.
+- `launch\stop.cmd` publishes `stop_all` and cleans stale source-module, team launcher, and old installed entry-point processes such as `chaser_brain.exe` and `chaser_brain-script.py`.
 - The bridge can load saved team sizes and adopt existing manual drones up to 5v5.
-- Red_1 and blue_1 use the duel brains; support drones use team roles.
+- In 5v5, red_1 and blue_1 are also team-controlled so all ten drones move.
 - Red support can screen, decoy, hide, or bait.
 - Blue support can flank, clear screens, cut off lanes, deny center, or split into search lanes.
-- Red-elimination mode eliminates support reds first; red_1 is finished last by blue_1.
+- Red-elimination mode can tag any active target when `SIM_TEAM_CATCH_MODE=any`.
 - Eliminated red drones drop to `SIM_TEAM_ELIMINATION_GROUND_Z`, default `0`, and are held out until reset.
+- The current 5v5 preset stops the game once all five red targets are down.
+- The current 5v5 preset uses a demo-friendly `SIM_CATCH_DISTANCE=220` and a chaser intercept speed about `1.75x` the target burst speed.
+- `launch\panel.cmd` opens a chaser/target team panel with action pulses and `TAGGED` display for targets at `z=0`.
 - The bridge uses a software arena guard for direct UnrealCV movement:
   - `SIM_TARGET_BOUND_X=1350`
   - `SIM_TARGET_BOUND_Y=1350`
@@ -45,7 +48,7 @@ Current work is not about reopening Phase 2B or Phase 3. The focus is stability 
 
 - Direct UnrealCV movement cannot use real Unreal mesh collision. Software bounds, drone spacing, and configured blockers are the current workaround.
 - Measured arena bounds may need tuning if the visible main wall does not match the `1350/1350/90` default.
-- Red-elimination is functional, but there is no full match manager with scoreboard, timers, summaries, or replay metrics yet.
+- Red-elimination is functional, but there is no full scoreboard, timer, summary, or replay metrics layer yet.
 - Support drones do not yet have per-drone stamina/heat.
 - Real Unreal raycast perception is not implemented yet.
 
@@ -54,7 +57,7 @@ Current work is not about reopening Phase 2B or Phase 3. The focus is stability 
 Run a clean test:
 
 ```powershell
-.\scripts\DroneROS\stop_chase.cmd
+.\launch\stop.cmd
 ```
 
-Then restart bridge, target brain, chaser brain, and start the chase. If movement looks wrong, first check for duplicate brain processes, then check the bridge arena guard line and the watcher’s actual-speed output.
+Then restart bridge, target brain, chaser brain, panel, and start the chase. If movement looks wrong, first check for duplicate brain processes, then check the bridge arena guard line, team support logs, and the panel missing-pose/status output.

@@ -5,8 +5,9 @@
 - SimWorld can run the normal two-drone duel or a saved team match using existing manual drone actors up to 5v5.
 - ROS bridge publishes drone pose/odom and accepts velocity commands.
 - Primary drones:
-  - red_1 / `DroneA` uses the target brain.
-  - blue_1 / `DroneB` uses the chaser brain.
+  - red_1 / `DroneA` can use the target brain in normal duel mode.
+  - blue_1 / `DroneB` can use the chaser brain in normal duel mode.
+  - in the current 5v5 preset, team support controls both primaries too.
 - Team support drones:
   - red_2-red_5 default to `DroneA1`-`DroneA4`.
   - blue_2-blue_5 default to `DroneB1`-`DroneB4`.
@@ -41,9 +42,15 @@
 ## Team Mode
 
 - Team setup scripts can configure red/blue team sizes up to 5v5.
-- `run_team_support.cmd` starts separate red and blue coordinators/controllers.
+- `launch\team_support.cmd` starts separate red and blue coordinators/controllers.
 - Coordinators watch live poses and assign dynamic roles.
+- Coordinators can ask Ollama for per-drone role plans using `SIM_TEAM_USE_OLLAMA=1`.
+- Team Ollama uses the same default model and endpoint as the 1v1 brains:
+  - `gpt-oss:latest`
+  - `http://10.8.0.132:11434/api/generate`
 - Support controllers command only their own side.
+- The current 5v5 preset sets `SIM_TEAM_CONTROL_PRIMARIES=1`, so all ten drones move through team support.
+- The current 5v5 preset sets `SIM_TEAM_IGNORE_DUEL_PRIMARY_CMDS=1`, so duel brain hold commands do not override team movement.
 - Red support roles include:
   - `screen`
   - `decoy`
@@ -62,16 +69,19 @@
 
 ## Scoring And Rounds
 
-- Team catch mode defaults to primary scoring:
+- Normal team catch mode can use primary scoring:
   - `red_1` vs `blue_1`
 - `SIM_TEAM_CATCH_MODE=any` makes nearest red/blue contact score.
 - `SIM_TEAM_ROUND_MODE=red_elimination` runs elimination mode:
-  - support red drones are eliminated before red_1
-  - red_1 remains live until other active red drones are gone
-  - only blue_1 can finish red_1
+  - nearest active red/blue contact can tag a target when catch mode is `any`
   - eliminated red drones drop to `SIM_TEAM_ELIMINATION_GROUND_Z`, default `0`
   - eliminated red drones are excluded from live drone collision checks
-  - the bridge resets when all active red drones are caught
+  - the current 5v5 demo preset stops the game when all five targets are tagged
+- The current 5v5 demo preset uses:
+  - `SIM_CATCH_DISTANCE=220`
+  - `SIM_RED_BURST_SPEED=300`
+  - `SIM_BLUE_INTERCEPT_SPEED=525`
+  - chaser intercept speed is about `1.75x` target burst speed
 
 ## Brains
 
@@ -113,7 +123,11 @@ $env:SIM_TACTICAL_BLOCKERS="center_pillar,0,0,450,100,700"
 
 ## Watcher And Logs
 
-- `start_chase.cmd` can auto-run the compact watcher.
+- `launch\start.cmd` can auto-run the compact watcher.
+- `launch\panel.cmd` opens the Drone Team Panel.
+- The panel shows chasers on the top row and targets on the bottom row.
+- The panel marks red drones as `TAGGED` when they drop to `z=0`.
+- The panel pulses cards when actions, role changes, tags, or game-over events arrive.
 - Watcher shows:
   - ready/start/stop
   - target movement phase
@@ -129,12 +143,14 @@ $env:SIM_TACTICAL_BLOCKERS="center_pillar,0,0,450,100,700"
 ## Process Cleanup
 
 - Start/stop/reset commands use reliable control publishing, with repeated `start_all` delivery to reduce missed-start races.
-- `stop_chase.cmd` publishes `stop_all`.
+- `launch\new_round.cmd` starts another round after game over without killing bridge/brain/panel processes.
+- `launch\stop.cmd` publishes `stop_all`.
 - It also cleans stale live/source-module nodes and old installed ROS entry points such as:
   - `target_brain.exe`
   - `chaser_brain.exe`
   - `ue_bridge.exe`
   - matching `*-script.py` processes
+  - stale `team_node.cmd` launcher windows
 - This matters because duplicate brains can publish conflicting commands and make drones look frozen or inconsistent.
 
 ## Current Limitations

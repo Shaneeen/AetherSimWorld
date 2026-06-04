@@ -81,6 +81,7 @@ class TeamDroneController(Node):
         self.screen_hunt_distance = self._read_float_env("SIM_TEAM_SCREEN_HUNT_DISTANCE_CM", 2600.0)
         self.search_radius = self._read_float_env("SIM_TEAM_SEARCH_RADIUS_CM", 950.0)
         self.search_forward = self._read_float_env("SIM_TEAM_SEARCH_FORWARD_CM", 620.0)
+        self.blue_direct_commit_distance = self._read_float_env("SIM_BLUE_DIRECT_COMMIT_DISTANCE_CM", 900.0)
         self.tactical_clearance = self._read_float_env("SIM_TACTICAL_CLEARANCE_CM", 180.0)
         self.min_enemy_separation = self._read_float_env(
             "SIM_TEAM_MIN_ENEMY_SEPARATION_CM",
@@ -156,7 +157,7 @@ class TeamDroneController(Node):
         self.poses[drone.name] = (
             msg.pose.position.x,
             msg.pose.position.y,
-            self._clamp_z(msg.pose.position.z),
+            msg.pose.position.z,
             time.time(),
         )
 
@@ -216,6 +217,8 @@ class TeamDroneController(Node):
         for enemy in enemies:
             enemy_pose = self._pose(enemy.name)
             if enemy_pose is None:
+                continue
+            if team == "blue" and enemy_pose[2] <= self.min_z * 0.5:
                 continue
             distance = self._distance(pose, enemy_pose)
             if distance < best_distance:
@@ -279,6 +282,8 @@ class TeamDroneController(Node):
         push_x = 0.0
         push_y = 0.0
         reason = None
+        if drone.team == "blue":
+            return desired_x, desired_y, None
         enemies = self.blue_drones if drone.team == "red" else self.red_drones
         for enemy in enemies:
             if enemy.name == ignore_enemy:
@@ -431,6 +436,15 @@ class TeamDroneController(Node):
         if own is None or runner is None:
             return None
         chaser = self._primary_pose("blue") or own
+        nearest_red = self._nearest_enemy(drone)
+        if nearest_red is not None and self._distance(own, nearest_red[1]) <= self.blue_direct_commit_distance:
+            target_name, target_pose = nearest_red
+            speed = self.blue_profile.speeds.get("intercept", 300.0) * self.blue_support_speed_scale
+            desired_x, desired_y = self._separate_from_allies(drone, own, target_pose[0], target_pose[1])
+            desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
+            reasons = [f"direct commit on {target_name}", route_reason]
+            self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
+            return desired_x, desired_y, self._role_height(target_pose[2], "interceptor", drone_index(drone)), speed
         screen = self._assigned_red_support_for_blue(drone) or self._nearest_red_support_to_runner()
         if drone_index(drone) > 1 and screen is not None and role in {"flanker", "cutoff", "support"}:
             role = "pressure_screen"
@@ -607,10 +621,12 @@ class TeamDroneController(Node):
         self.last_status_at = now
         roles = {drone.name: self.roles.get(drone.name, self._fallback_role_for(drone)) for drone in self.drones}
         intents = {name: self.intent.get(name, "") for name in roles if self.intent.get(name)}
+        missing_poses = [drone.name for drone in self.drones if self._pose(drone.name) is None]
         self.publish_status(
             "Team support active: "
             f"scope={self.team_scope}, roles={json.dumps(roles, separators=(',', ':'))}, "
-            f"intent={json.dumps(intents, separators=(',', ':'))}"
+            f"intent={json.dumps(intents, separators=(',', ':'))}, "
+            f"missing_poses={','.join(missing_poses) if missing_poses else 'none'}"
         )
 
     def control_loop(self) -> None:

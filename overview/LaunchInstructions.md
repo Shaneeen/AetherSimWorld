@@ -59,7 +59,11 @@ cd C:\CodeSimWorld\AetherSimWorld
 .\launch\start.cmd
 ```
 
-For 5v5, `start.cmd` auto-starts red/blue team coordinators and support controllers in the background. You can also start support manually:
+For 5v5, `start.cmd` auto-starts red/blue team coordinators and support controllers in the background. In this mode all five chasers and all five targets move through team support. When a target is hit, it drops to `z=0` and stays down. When all five targets are down, the game stops.
+
+The default 5v5 setup is tuned for demos: tag distance is `220` cm, and chasers are configured about `1.75x` faster than the target burst speed.
+
+You can also start support manually:
 
 ```powershell
 cd C:\CodeSimWorld\AetherSimWorld
@@ -72,6 +76,15 @@ Stop chase:
 cd C:\CodeSimWorld\AetherSimWorld
 .\launch\stop.cmd
 ```
+
+Start a new round after all targets are tagged:
+
+```powershell
+cd C:\CodeSimWorld\AetherSimWorld
+.\launch\new_round.cmd
+```
+
+Use `new_round.cmd` when the bridge, panel, and support windows are still open. Use `stop.cmd` only when you want to clean up and restart the bridge/brains from scratch.
 
 5v5 requires these existing actor names in the Unreal scene:
 

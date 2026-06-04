@@ -28,6 +28,7 @@ Potential tasks:
 - configurable difficulty presets
 - red-elimination summary
 - debug HUD or compact telemetry overlay
+- improve the current Drone Team Panel with score/timer summaries
 - process-health checks that warn when duplicate target/chaser/bridge/team nodes are running
 - one-command clean start that stops stale nodes, verifies no duplicates, then launches the current source-module stack
 
@@ -64,9 +65,9 @@ Potential tasks:
 
 ## Recommended Immediate Next Work
 
-1. Run `.\scripts\DroneROS\stop_chase.cmd` before every fresh test.
+1. Run `.\launch\stop.cmd` before every fresh test.
 2. Confirm no stale installed `target_brain.exe`, `chaser_brain.exe`, or `*-script.py` processes are alive.
 3. Confirm the bridge log prints the arena guard line.
-4. Run a clean 2v2 or 5v5 test.
+4. Run a clean 5v5 demo test through `.\launch\set_teams_5v5.cmd`, bridge, target, chaser, panel, and start.
 5. Tune `SIM_TARGET_BOUND_X`, `SIM_TARGET_BOUND_Y`, and `SIM_ARENA_BOUNDARY_MARGIN_CM` if the visible wall does not match the current default.
 6. Tune `SIM_TACTICAL_BLOCKERS` or `SIM_COLLISION_BLOCKERS` for actual cover objects after the basic lifecycle is clean.

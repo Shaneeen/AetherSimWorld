@@ -68,7 +68,7 @@ class UeBridge(Node):
             String,
             "/sim/reset_chase",
             self.reset_chase_callback,
-            10,
+            CONTROL_QOS,
         )
 
         self.client = None
@@ -76,6 +76,7 @@ class UeBridge(Node):
         self.spawned = False
         self.team_cmd_subs = []
         self.last_connect_attempt_at = 0.0
+        self.last_reset_command_at = 0.0
         self.reconnect_interval_sec = self._read_float_env("SIMWORLD_BRIDGE_RECONNECT_SEC", 2.0)
         self.red_team_size = self._read_int_env("SIM_RED_TEAM_SIZE", 1, 1, 5)
         self.blue_team_size = self._read_int_env("SIM_BLUE_TEAM_SIZE", 1, 1, 5)
@@ -119,6 +120,7 @@ class UeBridge(Node):
             )
             self.min_z, self.max_z = self.max_z, self.min_z
         self.swept_movement = os.getenv("SIMWORLD_DRONE_SWEEP", "1").lower() not in {"0", "false", "no"}
+        self.push_rotation = os.getenv("SIMWORLD_PUSH_ROTATION", "0").lower() not in {"0", "false", "no"}
         self.direct_on_sweep_block = os.getenv("SIMWORLD_DIRECT_ON_SWEEP_BLOCK", "0").lower() not in {
             "0",
             "false",
@@ -187,6 +189,7 @@ class UeBridge(Node):
             "no",
         }
         self.eliminated_actor_ids: set[str] = set()
+        self.match_over = False
         self.elimination_ground_z = self._read_float_env("SIM_TEAM_ELIMINATION_GROUND_Z", 0.0)
         self.elimination_grace_sec = max(0.0, self._read_float_env("SIM_TEAM_ELIMINATION_GRACE_SEC", 3.0))
         self.primary_elimination_resets = os.getenv("SIM_TEAM_PRIMARY_ELIMINATION_RESETS", "0").lower() not in {
@@ -278,7 +281,8 @@ class UeBridge(Node):
         self.publish_status(
             "UE bridge movement config: "
             f"ignore_duel_primary={int(self.ignore_duel_primary_cmds)} "
-            f"sweep={int(self.swept_movement)} direct_on_sweep_block={int(self.direct_on_sweep_block)} "
+            f"sweep={int(self.swept_movement)} push_rotation={int(self.push_rotation)} "
+            f"direct_on_sweep_block={int(self.direct_on_sweep_block)} "
             f"round={self.team_round_mode} catch_mode={self.match_rules.scoring_mode}"
         )
         self.publish_status(
@@ -549,6 +553,7 @@ class UeBridge(Node):
         self._place_team("blue", bx, by, blue_heading)
         self.tag_paused_until = 0.0
         self.tag_latched = False
+        self.match_over = False
         self.eliminated_actor_ids.clear()
         for actor in self.actors:
             actor["vx"] = 0.0
@@ -708,9 +713,10 @@ class UeBridge(Node):
         self.client.request(
             f"vset /object/{actor['name']}/location {actor['x']} {actor['y']} {actor['z']}"
         )
-        self.client.request(
-            f"vset /object/{actor['name']}/rotation 0 {actor['yaw_deg']} 0"
-        )
+        if self.push_rotation:
+            self.client.request(
+                f"vset /object/{actor['name']}/rotation 0 {actor['yaw_deg']} 0"
+            )
         scale = actor.get("scale")
         if scale is not None:
             self.client.request(
@@ -958,32 +964,41 @@ class UeBridge(Node):
     def _eliminate_actor(self, actor: dict, caught_by: dict, distance: float) -> None:
         if actor["id"] in self.eliminated_actor_ids:
             return
+        xy_distance = math.hypot(actor["x"] - caught_by["x"], actor["y"] - caught_by["y"])
+        z_delta = abs(actor["z"] - caught_by["z"])
         self.eliminated_actor_ids.add(actor["id"])
         actor["z"] = self.elimination_ground_z
         self._push_actor_state(actor)
         self.publish_status(
             f"Team elimination: {actor['id']} caught by {caught_by['id']} "
-            f"at {distance:.1f} cm; dropped to z={self.elimination_ground_z:.1f}"
+            f"at {distance:.1f} cm "
+            f"(xy={xy_distance:.1f}, dz={z_delta:.1f}, catch={self.catch_distance:.1f}); "
+            f"dropped to z={self.elimination_ground_z:.1f}"
         )
 
-    def _reset_after_elimination_round(self) -> None:
-        self.publish_status("Team elimination round complete: all red drones caught; resetting")
+    def _end_elimination_round(self) -> None:
+        self.match_over = True
+        self.tag_paused_until = float("inf")
+        self.publish_status("Team elimination game over: all target drones are down")
         self._publish_control_command("stop_all")
-        self._randomize_chase_start()
+        for actor in self.actors:
+            actor["vx"] = 0.0
+            actor["vy"] = 0.0
+            actor["vz"] = 0.0
+            if actor["team"] == "red":
+                actor["z"] = self.elimination_ground_z
+                self.eliminated_actor_ids.add(actor["id"])
         self._push_all_actor_states()
         self._publish_all_poses()
-        self._publish_control_command("start_all")
         self.publish_status(
-            "Chase start reset: "
-            f"DroneA=({self.actor_a['x']:.1f},{self.actor_a['y']:.1f}), "
-            f"DroneB=({self.actor_b['x']:.1f},{self.actor_b['y']:.1f}), "
-            f"distance_cm={self._primary_pair_distance():.1f}, "
-            f"scoring_distance_cm={self._nearest_opposing_pair()[0]:.1f}, "
-            f"teams=red:{len(self._team_actors('red'))} blue:{len(self._team_actors('blue'))}, "
-            f"catch_mode={self.match_rules.scoring_mode}"
+            "Team elimination final: "
+            f"targets_down={len(self.eliminated_actor_ids)} "
+            f"blue={','.join(actor['id'] for actor in self._team_actors('blue'))}"
         )
 
     def _update_tag_pause_state(self) -> None:
+        if self.match_over:
+            return
         distance, red, blue = self._nearest_opposing_pair()
         if self._elimination_active():
             if time.time() - self.round_started_at < self.elimination_grace_sec:
@@ -992,10 +1007,9 @@ class UeBridge(Node):
                 return
             self._eliminate_actor(red, blue, distance)
             if self.primary_elimination_resets and red["id"] == "red_1":
-                self.publish_status("Team elimination primary runner caught; resetting round")
-                self._reset_after_elimination_round()
-            elif not self._active_red_actors():
-                self._reset_after_elimination_round()
+                self.publish_status("Team elimination primary runner caught")
+            if not self._active_red_actors():
+                self._end_elimination_round()
             else:
                 remaining = ",".join(actor["id"] for actor in self._active_red_actors())
                 self.publish_status(f"Team elimination continues: remaining_red={remaining}")
@@ -1102,6 +1116,11 @@ class UeBridge(Node):
             return
         if not self.connected or not self.spawned:
             return
+        now = time.time()
+        if now - self.last_reset_command_at < 3.0:
+            return
+        self.last_reset_command_at = now
+        self.match_over = False
         self._randomize_chase_start()
         try:
             self._push_all_actor_states()
@@ -1126,6 +1145,8 @@ class UeBridge(Node):
 
     def cmd_actor_callback(self, actor: dict, msg: Twist, source: str = "team") -> None:
         if not self.connected or not self.spawned:
+            return
+        if self.match_over:
             return
         if source == "duel" and self.ignore_duel_primary_cmds and actor["id"] in {"red_1", "blue_1"}:
             return

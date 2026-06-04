@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import math
 import os
@@ -8,6 +9,7 @@ import time
 from geometry_msgs.msg import PoseStamped
 import rclpy
 from rclpy.node import Node
+import requests
 from std_msgs.msg import String
 
 from simworld_drone_ros.team.models import TeamDrone, TeamPlan, build_team, read_team_speed_profile
@@ -32,6 +34,24 @@ class TeamCoordinator(Node):
         self.red_drones = self._team_drones("red")
         self.blue_drones = self._team_drones("blue")
         self.speed_profile = read_team_speed_profile(self.team)
+        self.ollama_enabled = os.environ.get("SIM_TEAM_USE_OLLAMA", os.environ.get("USE_OLLAMA", "1")) != "0"
+        self.ollama_model = os.environ.get("SIM_TEAM_OLLAMA_MODEL", os.environ.get("OLLAMA_MODEL", "gpt-oss:latest"))
+        self.ollama_urls = self._read_ollama_urls()
+        self.ollama_timeout = self._read_float_env("OLLAMA_TIMEOUT_SEC", 20.0)
+        self.ollama_decision_cooldown_sec = self._read_float_env("SIM_TEAM_OLLAMA_COOLDOWN_SEC", 3.0)
+        self.ollama_failure_backoff_sec = self._read_float_env("SIM_TEAM_OLLAMA_FAILURE_BACKOFF_SEC", 8.0)
+        self.ollama_max_backoff_sec = self._read_float_env("SIM_TEAM_OLLAMA_MAX_BACKOFF_SEC", 60.0)
+        self.ollama_num_ctx = int(self._read_float_env("SIM_TEAM_OLLAMA_NUM_CTX", 768.0))
+        self.ollama_num_predict = int(self._read_float_env("SIM_TEAM_OLLAMA_NUM_PREDICT", 192.0))
+        self.ollama_num_gpu = int(self._read_float_env("SIM_TEAM_OLLAMA_NUM_GPU", -1.0))
+        self.ollama_executor = ThreadPoolExecutor(max_workers=1)
+        self.ollama_future = None
+        self.last_ollama_request_at = 0.0
+        self.ollama_failure_count = 0
+        self.ollama_disabled_until = 0.0
+        self.pending_ollama_error = None
+        self.cached_ollama_plan: TeamPlan | None = None
+        self.cached_ollama_at = 0.0
         for drone in self.drones:
             self.role_pubs[drone.name] = self.create_publisher(String, drone.role_topic, 10)
 
@@ -64,6 +84,8 @@ class TeamCoordinator(Node):
         self.publish_status(
             f"Team coordinator ready: team={self.team}, drones={','.join(d.name for d in self.drones)}, "
             f"speeds={speeds}, model={self.speed_profile.model_reference}, mode=live_state, "
+            f"ollama={int(self.ollama_enabled)}, ollama_model={self.ollama_model}, "
+            f"ollama_urls={','.join(self.ollama_urls)}, "
             f"tactical_blockers={len(self.blockers)}"
         )
 
@@ -78,6 +100,15 @@ class TeamCoordinator(Node):
 
     def _team_drones(self, team: str) -> tuple[TeamDrone, ...]:
         return build_team(team)
+
+    def _read_ollama_urls(self) -> list[str]:
+        urls_value = os.environ.get("SIM_TEAM_OLLAMA_API_URLS", os.environ.get("OLLAMA_API_URLS"))
+        if not urls_value:
+            urls_value = os.environ.get("SIM_TEAM_OLLAMA_API_URL", os.environ.get("OLLAMA_API_URL"))
+        if not urls_value:
+            urls_value = "http://10.8.0.132:11434/api/generate"
+        urls = [url.strip() for url in urls_value.split(",") if url.strip()]
+        return urls or ["http://10.8.0.132:11434/api/generate"]
 
     def publish_status(self, text: str) -> None:
         msg = String()
@@ -179,6 +210,159 @@ class TeamCoordinator(Node):
             drone.name: role_order[index] if index < len(role_order) else role_order[-1]
             for index, drone in enumerate(self.drones)
         }
+
+    def _allowed_roles(self) -> tuple[str, ...]:
+        if self.team == "red":
+            return ("runner", "screen", "decoy", "hide", "bait")
+        return ("interceptor", "flanker", "pressure_screen", "cutoff", "support", "search")
+
+    def _build_ollama_request(self, fallback: TeamPlan) -> dict:
+        runner = self._pose("red_1")
+        chaser = self._pose("blue_1")
+        pressure = self._distance("red_1", "blue_1")
+        live_poses = {
+            drone.name: {
+                "x": round(pose[0], 1),
+                "y": round(pose[1], 1),
+                "z": round(pose[2], 1),
+            }
+            for drone in self.red_drones + self.blue_drones
+            for pose in [self._pose(drone.name)]
+            if pose is not None
+        }
+        payload_obj = {
+            "team": self.team,
+            "drones": [drone.name for drone in self.drones],
+            "allowed_roles": self._allowed_roles(),
+            "current_roles": fallback.roles,
+            "fallback_reason": fallback.rationale,
+            "red_1": runner,
+            "blue_1": chaser,
+            "pressure_cm": round(pressure, 1) if pressure is not None else None,
+            "poses": live_poses,
+            "goal": "red survives and screens" if self.team == "red" else "blue catches all red targets",
+        }
+        system = (
+            "You are the team coordinator for a SimWorld 5v5 drone chase. "
+            "Choose one immediate role for every drone on your team. "
+            "Return compact JSON only: {\"roles\":{\"drone_name\":\"role\"},\"reason\":\"short reason\"}. "
+            "Use only the allowed roles. Keep red_1 as runner and blue_1 as interceptor. "
+            "For red, spread support between screen, decoy, hide, and bait. "
+            "For blue, spread pressure between flanker, pressure_screen, cutoff, support, and search. "
+            "Do not explain outside JSON."
+        )
+        prompt = f"System:\n{system}\n\nUser:\n{json.dumps(payload_obj, separators=(',', ':'))}\n\nPlan:"
+        options = {
+            "temperature": 0.2,
+            "num_ctx": max(128, self.ollama_num_ctx),
+            "num_predict": max(32, self.ollama_num_predict),
+        }
+        if self.ollama_num_gpu >= 0:
+            options["num_gpu"] = self.ollama_num_gpu
+        return {
+            "model": self.ollama_model,
+            "prompt": prompt,
+            "stream": False,
+            "think": False,
+            "options": options,
+        }
+
+    def _parse_ollama_plan(self, raw: str, fallback: TeamPlan) -> TeamPlan:
+        text = raw.strip()
+        parsed = None
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            start = text.find("{")
+            end = text.rfind("}")
+            if start >= 0 and end > start:
+                parsed = json.loads(text[start : end + 1])
+        if not isinstance(parsed, dict):
+            raise RuntimeError(f"Ollama returned no JSON plan: {text[:160]!r}")
+        raw_roles = parsed.get("roles", {})
+        if not isinstance(raw_roles, dict):
+            raise RuntimeError(f"Ollama returned invalid roles: {text[:160]!r}")
+        allowed = set(self._allowed_roles())
+        roles = dict(fallback.roles)
+        for drone in self.drones:
+            role = str(raw_roles.get(drone.name, "")).strip().lower()
+            if role in allowed:
+                roles[drone.name] = role
+        if self.team == "red":
+            roles["red_1"] = "runner"
+        else:
+            roles["blue_1"] = "interceptor"
+        reason = str(parsed.get("reason", "ollama team role plan")).strip()[:160] or "ollama team role plan"
+        return TeamPlan(team=self.team, focus_enemy=fallback.focus_enemy, roles=roles, rationale=reason)
+
+    def _ollama_request_worker(self, body: dict, fallback: TeamPlan) -> TeamPlan:
+        errors = []
+        for url in self.ollama_urls:
+            try:
+                response = requests.post(url, json=body, timeout=max(1.0, self.ollama_timeout))
+                response.raise_for_status()
+                outer = response.json()
+                raw = outer.get("response", "") if isinstance(outer, dict) else ""
+                if not raw and isinstance(outer, dict):
+                    raw = outer.get("thinking", "")
+                if not raw:
+                    raise RuntimeError(f"{url} empty response")
+                return self._parse_ollama_plan(raw, fallback)
+            except Exception as exc:
+                errors.append(str(exc))
+        raise RuntimeError("Ollama endpoints failed: " + " | ".join(errors))
+
+    def _record_ollama_failure(self, exc: Exception) -> None:
+        self.ollama_failure_count += 1
+        backoff = min(
+            self.ollama_max_backoff_sec,
+            self.ollama_failure_backoff_sec * (2 ** min(self.ollama_failure_count - 1, 4)),
+        )
+        self.ollama_disabled_until = time.time() + backoff
+        self.pending_ollama_error = f"{exc}; retrying in {backoff:.0f}s"
+
+    def _harvest_ollama_result(self) -> None:
+        if self.ollama_future is None or not self.ollama_future.done():
+            return
+        try:
+            plan = self.ollama_future.result()
+            self.cached_ollama_plan = plan
+            self.cached_ollama_at = time.time()
+            self.ollama_failure_count = 0
+            self.ollama_disabled_until = 0.0
+            self.publish_status(
+                f"Team coordinator cached Ollama plan: team={plan.team}, "
+                f"roles={json.dumps(plan.roles, separators=(',', ':'))}, reason={plan.rationale}"
+            )
+        except Exception as exc:
+            self._record_ollama_failure(exc)
+        finally:
+            self.ollama_future = None
+
+    def _maybe_schedule_ollama(self, fallback: TeamPlan) -> None:
+        if not self.ollama_enabled:
+            return
+        if self.ollama_future is not None:
+            return
+        now = time.time()
+        if now < self.ollama_disabled_until:
+            return
+        if now - self.last_ollama_request_at < self.ollama_decision_cooldown_sec:
+            return
+        body = self._build_ollama_request(fallback)
+        self.ollama_future = self.ollama_executor.submit(self._ollama_request_worker, body, fallback)
+        self.last_ollama_request_at = now
+
+    def _plan_with_ollama(self) -> TeamPlan:
+        fallback = self._fallback_plan()
+        self._harvest_ollama_result()
+        if self.pending_ollama_error:
+            self.publish_status(f"Team coordinator Ollama fallback: team={self.team}, {self.pending_ollama_error}")
+            self.pending_ollama_error = None
+        self._maybe_schedule_ollama(fallback)
+        if self.cached_ollama_plan is not None and time.time() - self.cached_ollama_at <= 12.0:
+            return self.cached_ollama_plan
+        return fallback
 
     def _fallback_plan(self) -> TeamPlan:
         live = self._live_plan()
@@ -289,7 +473,7 @@ class TeamCoordinator(Node):
         )
 
     def control_loop(self) -> None:
-        self._publish_plan(self._fallback_plan())
+        self._publish_plan(self._plan_with_ollama())
 
 
 def _drone_index(drone: TeamDrone) -> int:
@@ -307,6 +491,7 @@ def main(args=None) -> None:
     except KeyboardInterrupt:
         pass
     finally:
+        node.ollama_executor.shutdown(wait=False, cancel_futures=True)
         node.destroy_node()
         if rclpy.ok():
             rclpy.shutdown()

@@ -19,17 +19,21 @@ class StartSignal(Node):
         self.target_pub = self.create_publisher(String, "/drone_a/control", CONTROL_QOS)
         self.chaser_pub = self.create_publisher(String, "/drone_b/control", CONTROL_QOS)
         self.team_pub = self.create_publisher(String, "/team/control", CONTROL_QOS)
-        self.reset_pub = self.create_publisher(String, "/sim/reset_chase", 10)
+        self.reset_pub = self.create_publisher(String, "/sim/reset_chase", CONTROL_QOS)
 
     def send(self) -> None:
         msg = String()
         msg.data = self.command
         self._wait_for_discovery()
         if self.command in {"reset", "reset_chase", "randomize", "randomize_start"}:
-            for _ in range(2):
+            for _ in range(40):
                 self.reset_pub.publish(msg)
                 rclpy.spin_once(self, timeout_sec=0.05)
                 time.sleep(0.15)
+            end_at = time.time() + 2.0
+            while time.time() < end_at:
+                rclpy.spin_once(self, timeout_sec=0.05)
+                time.sleep(0.05)
             self.get_logger().info(f"Published chase reset command: {self.command}")
             return
 

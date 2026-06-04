@@ -18,6 +18,8 @@ from std_msgs.msg import String
 
 MAX_TEAM_SIZE = 5
 PULSE_SECONDS = 0.9
+TAGGED_Z_CM = 5.0
+PANEL_REFRESH_MS = 250
 
 TEAM_COLORS = {
     "blue": {
@@ -208,6 +210,9 @@ class TeamPanelNode(Node):
             card.last_pose_at = time.time()
             if card.detail == "no signal":
                 card.detail = "pose online"
+            if card.team == "red" and card.pose[2] <= TAGGED_Z_CM and card.action != "TAGGED":
+                card.role = "tagged"
+                self._mark_action(name, "TAGGED", "z=0 target down")
 
     def _cmd_callback(self, name: str, msg: Twist) -> None:
         with self.lock:
@@ -275,13 +280,15 @@ class TeamPanelNode(Node):
 
         if text.startswith("Team support active:"):
             roles = _extract_json_between(text, "roles=", ", intent=")
-            intents = _extract_json_between(text, "intent=")
+            intents = _extract_json_between(text, "intent=", ", missing_poses=")
+            missing = _extract_field(text, "missing_poses")
+            missing_names = set() if missing in {"", "none"} else set(missing.split(","))
             for name, role in roles.items():
                 card = self.cards.get(name)
                 if card is None:
                     continue
                 card.role = str(role)
-                intent = str(intents.get(name, "tracking role"))
+                intent = "missing pose from bridge" if name in missing_names else str(intents.get(name, "tracking role"))
                 self._mark_action(name, str(role), intent)
             return
 
@@ -290,6 +297,27 @@ class TeamPanelNode(Node):
             for card in self.cards.values():
                 if card.active and (scope == "all" or card.team == scope):
                     card.detail = "support ready"
+            return
+
+        if text.startswith("Team elimination:"):
+            match = re.search(r"Team elimination: (red_\d+) caught by (blue_\d+)", text)
+            if match:
+                red_name, blue_name = match.groups()
+                red_card = self.cards.get(red_name)
+                if red_card is not None:
+                    red_card.role = "eliminated"
+                    self._mark_action(red_name, "down", text)
+                self._mark_action(blue_name, "tagged target", text)
+            return
+
+        if text.startswith("Team elimination game over:"):
+            for card in self.cards.values():
+                if card.team == "red" and card.active:
+                    card.role = "eliminated"
+                    self._mark_action(card.name, "down", "game over")
+                elif card.team == "blue" and card.active:
+                    self._mark_action(card.name, "game over", "all targets down")
+            return
 
 
 class TeamPanelApp:
@@ -357,19 +385,19 @@ class TeamPanelApp:
             detail_var = tk.StringVar()
             pose_var = tk.StringVar()
 
-            tk.Label(card, textvariable=name_var, bg=colors["base"], fg=colors["text"], font=("Segoe UI", 12, "bold")).grid(
+            tk.Label(card, textvariable=name_var, bg=colors["base"], fg=colors["text"], font=("Segoe UI", 10, "bold"), wraplength=185).grid(
                 row=0, column=0, sticky="ew", padx=10, pady=(10, 2)
             )
-            tk.Label(card, textvariable=action_var, bg=colors["base"], fg="#ffffff", font=("Segoe UI", 15, "bold")).grid(
+            tk.Label(card, textvariable=action_var, bg=colors["base"], fg="#ffffff", font=("Segoe UI", 11, "bold"), wraplength=185).grid(
                 row=1, column=0, sticky="ew", padx=10, pady=(4, 2)
             )
-            tk.Label(card, textvariable=role_var, bg=colors["base"], fg="#c9d1d9", font=("Segoe UI", 10)).grid(
+            tk.Label(card, textvariable=role_var, bg=colors["base"], fg="#c9d1d9", font=("Segoe UI", 9), wraplength=185).grid(
                 row=2, column=0, sticky="ew", padx=10, pady=(0, 2)
             )
-            tk.Label(card, textvariable=detail_var, bg=colors["base"], fg="#9da7b3", font=("Segoe UI", 9), wraplength=190).grid(
+            tk.Label(card, textvariable=detail_var, bg=colors["base"], fg="#9da7b3", font=("Segoe UI", 8), wraplength=185).grid(
                 row=3, column=0, sticky="ew", padx=10, pady=(5, 2)
             )
-            tk.Label(card, textvariable=pose_var, bg=colors["base"], fg="#7d8590", font=("Consolas", 9)).grid(
+            tk.Label(card, textvariable=pose_var, bg=colors["base"], fg="#7d8590", font=("Segoe UI", 8)).grid(
                 row=4, column=0, sticky="ew", padx=10, pady=(4, 10)
             )
 
@@ -416,16 +444,17 @@ class TeamPanelApp:
                 child.configure(bg=bg)
 
             widgets["name"].set(f"{card.actor}  ({card.name})" if card.active else f"empty slot {card.index}")
-            widgets["action"].set(card.action if card.active else "unused")
+            tagged_by_pose = card.team == "red" and card.pose is not None and card.pose[2] <= TAGGED_Z_CM
+            widgets["action"].set("TAGGED" if card.active and tagged_by_pose else card.action if card.active else "unused")
             widgets["role"].set(f"role: {card.role}" if card.active else "")
-            widgets["detail"].set(card.detail if card.active else "")
+            widgets["detail"].set("z=0 target down" if card.active and tagged_by_pose else card.detail if card.active else "")
             if card.pose and card.active:
                 age = now - card.last_pose_at
-                widgets["pose"].set(f"x {card.pose[0]:.0f}  y {card.pose[1]:.0f}  z {card.pose[2]:.0f}  {age:.1f}s")
+                widgets["pose"].set(f"signal {age:.1f}s")
             else:
                 widgets["pose"].set("no pose" if card.active else "")
 
-        self.root.after(100, self._refresh)
+        self.root.after(PANEL_REFRESH_MS, self._refresh)
 
 
 def main(args: list[str] | None = None) -> None:

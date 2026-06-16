@@ -13,6 +13,7 @@ from tkinter import ttk
 from geometry_msgs.msg import PoseStamped, Twist
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from std_msgs.msg import String
 
 
@@ -20,6 +21,10 @@ MAX_TEAM_SIZE = 5
 PULSE_SECONDS = 0.9
 TAGGED_Z_CM = 5.0
 PANEL_REFRESH_MS = 250
+
+CONTROL_QOS = QoSProfile(depth=10)
+CONTROL_QOS.reliability = ReliabilityPolicy.RELIABLE
+CONTROL_QOS.durability = DurabilityPolicy.TRANSIENT_LOCAL
 
 TEAM_COLORS = {
     "blue": {
@@ -125,7 +130,12 @@ class TeamPanelNode(Node):
         self.lock = threading.Lock()
         self.cards: dict[str, DroneCard] = {}
         self.last_status = "waiting for /sim/status"
+        self.panel_command = "ready"
         self._kept_subscriptions = []
+        self.target_control_pub = self.create_publisher(String, "/drone_a/control", CONTROL_QOS)
+        self.chaser_control_pub = self.create_publisher(String, "/drone_b/control", CONTROL_QOS)
+        self.team_control_pub = self.create_publisher(String, "/team/control", CONTROL_QOS)
+        self.reset_pub = self.create_publisher(String, "/sim/reset_chase", CONTROL_QOS)
 
         for team in ("blue", "red"):
             size = _team_size(team)
@@ -186,7 +196,62 @@ class TeamPanelNode(Node):
 
     def snapshot(self) -> tuple[dict[str, DroneCard], str]:
         with self.lock:
-            return {name: DroneCard(**vars(card)) for name, card in self.cards.items()}, self.last_status
+            status = self.last_status
+            if self.panel_command != "ready":
+                status = f"panel: {self.panel_command} | {status}"
+            return {name: DroneCard(**vars(card)) for name, card in self.cards.items()}, status
+
+    def send_runtime_command(self, command: str) -> None:
+        command = command.strip().lower()
+        if command == "new_round":
+            thread = threading.Thread(target=self._send_new_round_sequence, daemon=True)
+        elif command in {"reset", "reset_chase", "randomize", "randomize_start"}:
+            thread = threading.Thread(target=self._send_reset_only, daemon=True)
+        else:
+            thread = threading.Thread(target=self._send_control_command, args=(command,), daemon=True)
+        thread.start()
+
+    def _set_panel_command(self, text: str) -> None:
+        with self.lock:
+            self.panel_command = text
+
+    def _send_control_command(self, command: str) -> None:
+        self._set_panel_command(f"sending {command}")
+        msg = String()
+        msg.data = command
+        try:
+            for _ in range(24):
+                self.target_control_pub.publish(msg)
+                self.chaser_control_pub.publish(msg)
+                self.team_control_pub.publish(msg)
+                time.sleep(0.08)
+        finally:
+            self._set_panel_command("ready")
+
+    def _send_reset_command(self) -> None:
+        msg = String()
+        msg.data = "reset_chase"
+        for _ in range(24):
+            self.reset_pub.publish(msg)
+            time.sleep(0.08)
+
+    def _send_new_round_sequence(self) -> None:
+        self._set_panel_command("new round: stopping")
+        self._send_control_command("stop_all")
+        time.sleep(0.4)
+        self._set_panel_command("new round: resetting")
+        self._send_reset_command()
+        time.sleep(0.4)
+        self._set_panel_command("new round: starting")
+        self._send_control_command("start_all")
+        self._set_panel_command("ready")
+
+    def _send_reset_only(self) -> None:
+        self._set_panel_command("resetting")
+        try:
+            self._send_reset_command()
+        finally:
+            self._set_panel_command("ready")
 
     def _mark_action(self, name: str, action: str, detail: str = "") -> None:
         card = self.cards.get(name)
@@ -336,26 +401,54 @@ class TeamPanelApp:
         style.configure("Section.TFrame", background="#0d1117")
         style.configure("Header.TLabel", background="#0d1117", foreground="#f0f6fc", font=("Segoe UI", 17, "bold"))
         style.configure("Status.TLabel", background="#0d1117", foreground="#8b949e", font=("Segoe UI", 10))
+        style.configure("Control.TButton", font=("Segoe UI", 10, "bold"))
 
         self.root.columnconfigure(0, weight=1)
-        self.root.rowconfigure(1, weight=1)
         self.root.rowconfigure(2, weight=1)
+        self.root.rowconfigure(3, weight=1)
 
-        title = ttk.Label(
-            self.root,
-            text="SimWorld 5v5 Drone Panel",
-            style="Header.TLabel",
-            anchor="center",
-        )
-        title.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+        header = ttk.Frame(self.root, style="Panel.TFrame")
+        header.grid(row=0, column=0, sticky="ew", padx=18, pady=(14, 4))
+        header.columnconfigure(0, weight=1)
+
+        title = ttk.Label(header, text="SimWorld 5v5 Drone Panel", style="Header.TLabel", anchor="w")
+        title.grid(row=0, column=0, sticky="ew")
+
+        controls = ttk.Frame(self.root, style="Panel.TFrame")
+        controls.grid(row=1, column=0, sticky="ew", padx=18, pady=(4, 2))
+        controls.columnconfigure(4, weight=1)
+        ttk.Button(
+            controls,
+            text="Start",
+            style="Control.TButton",
+            command=lambda: self.node.send_runtime_command("start_all"),
+        ).grid(row=0, column=0, sticky="w", padx=(0, 8))
+        ttk.Button(
+            controls,
+            text="Stop",
+            style="Control.TButton",
+            command=lambda: self.node.send_runtime_command("stop_all"),
+        ).grid(row=0, column=1, sticky="w", padx=(0, 8))
+        ttk.Button(
+            controls,
+            text="New Round",
+            style="Control.TButton",
+            command=lambda: self.node.send_runtime_command("new_round"),
+        ).grid(row=0, column=2, sticky="w", padx=(0, 8))
+        ttk.Button(
+            controls,
+            text="Reset Only",
+            style="Control.TButton",
+            command=lambda: self.node.send_runtime_command("reset_chase"),
+        ).grid(row=0, column=3, sticky="w", padx=(0, 8))
 
         self.sections = {
-            "blue": self._build_section(1, "blue"),
-            "red": self._build_section(2, "red"),
+            "blue": self._build_section(2, "blue"),
+            "red": self._build_section(3, "red"),
         }
         self.status_var = tk.StringVar(value="waiting for /sim/status")
         status = ttk.Label(self.root, textvariable=self.status_var, style="Status.TLabel", anchor="w")
-        status.grid(row=3, column=0, sticky="ew", padx=18, pady=(2, 10))
+        status.grid(row=4, column=0, sticky="ew", padx=18, pady=(2, 10))
 
     def _build_section(self, row: int, team: str) -> dict[str, dict[str, tk.Widget | tk.StringVar]]:
         colors = TEAM_COLORS[team]

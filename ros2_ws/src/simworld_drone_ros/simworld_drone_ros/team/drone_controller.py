@@ -82,6 +82,11 @@ class TeamDroneController(Node):
         self.search_radius = self._read_float_env("SIM_TEAM_SEARCH_RADIUS_CM", 950.0)
         self.search_forward = self._read_float_env("SIM_TEAM_SEARCH_FORWARD_CM", 620.0)
         self.blue_direct_commit_distance = self._read_float_env("SIM_BLUE_DIRECT_COMMIT_DISTANCE_CM", 900.0)
+        self.blue_finish_commit_distance = self._read_float_env("SIM_BLUE_FINISH_COMMIT_DISTANCE_CM", 360.0)
+        self.blue_endgame_commit_distance = self._read_float_env(
+            "SIM_BLUE_ENDGAME_COMMIT_DISTANCE_CM",
+            max(self.blue_direct_commit_distance, self.blue_finish_commit_distance),
+        )
         self.tactical_clearance = self._read_float_env("SIM_TACTICAL_CLEARANCE_CM", 180.0)
         self.min_enemy_separation = self._read_float_env(
             "SIM_TEAM_MIN_ENEMY_SEPARATION_CM",
@@ -92,6 +97,16 @@ class TeamDroneController(Node):
         self.poses: dict[str, tuple[float, float, float, float]] = {}
         self.roles: dict[str, str] = {}
         self.intent: dict[str, str] = {}
+        self.last_cmd_speed: dict[str, float] = {}
+        self.latest_vision_scene: dict | None = None
+        self.latest_vision_at = 0.0
+        self.vision_hint_enabled = os.environ.get("SIM_TEAM_USE_VISION_HINTS", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        self.vision_max_age_sec = self._read_float_env("SIM_TEAM_VISION_MAX_AGE_SEC", 60.0)
+        self.vision_min_confidence = self._read_float_env("SIM_TEAM_VISION_MIN_CONFIDENCE", 0.45)
         self.pose_subs = []
         self.role_subs = []
         self.cmd_pubs: dict[str, object] = {}
@@ -107,6 +122,7 @@ class TeamDroneController(Node):
                 )
             )
 
+        self.vision_sub = self.create_subscription(String, "/sim/vision_scene", self.vision_callback, 20)
         for drone in self.drones:
             self.role_subs.append(
                 self.create_subscription(
@@ -126,6 +142,9 @@ class TeamDroneController(Node):
             f"controlled={','.join(self.cmd_pubs) if self.cmd_pubs else 'none'} "
             f"pose_watch={len(self.red_drones) + len(self.blue_drones)} "
             f"tactical_blockers={len(self.blockers)} "
+            f"vla_action=1 blue_finish_commit={self.blue_finish_commit_distance:.0f} "
+            f"blue_endgame_commit={self.blue_endgame_commit_distance:.0f} "
+            f"vision_hints={int(self.vision_hint_enabled)} "
             f"started={int(self.started)}"
         )
 
@@ -170,6 +189,28 @@ class TeamDroneController(Node):
         if role:
             self.roles[drone.name] = role
 
+    def vision_callback(self, msg: String) -> None:
+        if not self.vision_hint_enabled:
+            return
+        try:
+            scene = json.loads(msg.data)
+        except json.JSONDecodeError:
+            return
+        confidence = float(scene.get("confidence", 0.0) or 0.0)
+        if confidence < self.vision_min_confidence:
+            return
+        self.latest_vision_scene = scene
+        self.latest_vision_at = time.time()
+        self.publish_status(
+            "VLA accepted vision scene: "
+            f"team={self.team_scope} "
+            f"source={scene.get('source', 'unknown')} "
+            f"runner_visible={scene.get('runner_visible')} "
+            f"blocked_by={scene.get('blocked_by') or 'none'} "
+            f"search={scene.get('recommended_search_area') or 'none'} "
+            f"confidence={confidence:.2f}"
+        )
+
     def control_callback(self, msg: String) -> None:
         command = msg.data.strip().lower()
         if command in {"start", "start_all", "start_team"}:
@@ -185,6 +226,8 @@ class TeamDroneController(Node):
                 self.publish_status("Team support received STOP")
 
     def _publish_zero_all(self) -> None:
+        for drone_name in self.cmd_pubs:
+            self.last_cmd_speed[drone_name] = 0.0
         for pub in self.cmd_pubs.values():
             try:
                 pub.publish(Twist())
@@ -205,6 +248,36 @@ class TeamDroneController(Node):
         if own_pose is None:
             return None
         return self._nearest_enemy_to_pose(drone.team, own_pose)
+
+    def _active_red_targets(self) -> list[tuple[str, tuple[float, float, float]]]:
+        targets: list[tuple[str, tuple[float, float, float]]] = []
+        for red in self.red_drones:
+            pose = self._pose(red.name)
+            if pose is None or pose[2] <= max(40.0, self.min_z * 0.5):
+                continue
+            targets.append((red.name, pose))
+        return targets
+
+    def _assigned_red_target_for_blue(self, drone: TeamDrone) -> tuple[str, tuple[float, float, float]] | None:
+        targets = self._active_red_targets()
+        if not targets:
+            return None
+        own = self._pose(drone.name)
+        if own is not None:
+            finishable = [
+                (name, pose, self._distance(own, pose))
+                for name, pose in targets
+                if self._distance(own, pose) <= self.blue_finish_commit_distance
+            ]
+            if finishable:
+                name, pose, _ = min(finishable, key=lambda item: (item[2], item[0]))
+                return name, pose
+        support_targets = [(name, pose) for name, pose in targets if name != "red_1"]
+        ordered = support_targets + [(name, pose) for name, pose in targets if name == "red_1"]
+        if not ordered:
+            return None
+        slot = max(0, drone_index(drone) - 1)
+        return ordered[slot % len(ordered)]
 
     def _nearest_enemy_to_pose(
         self,
@@ -228,6 +301,64 @@ class TeamDroneController(Node):
 
     def _primary_pose(self, team: str) -> tuple[float, float, float] | None:
         return self._pose(f"{team}_1")
+
+    def _fresh_vision_scene(self) -> dict | None:
+        if not self.vision_hint_enabled or self.latest_vision_scene is None:
+            return None
+        if time.time() - self.latest_vision_at > self.vision_max_age_sec:
+            return None
+        return self.latest_vision_scene
+
+    def _fresh_image_vlm_scene(self) -> dict | None:
+        scene = self._fresh_vision_scene()
+        if not scene:
+            return None
+        source = str(scene.get("source", ""))
+        if not source.startswith("vlm:"):
+            return None
+        if ":context" in source:
+            return None
+        return scene
+
+    def _image_vla_active(self) -> bool:
+        return self._fresh_image_vlm_scene() is not None
+
+    def _vision_runner_lost(self) -> bool:
+        scene = self._fresh_image_vlm_scene()
+        if not scene:
+            return False
+        return bool(
+            scene.get("runner_visible") is False
+            or scene.get("blocked_by")
+            or scene.get("recommended_search_area")
+        )
+
+    def _vision_runner_visible(self) -> bool:
+        scene = self._fresh_image_vlm_scene()
+        if not scene:
+            return False
+        return scene.get("runner_visible") is True
+
+    def _vision_search_name(self) -> str:
+        scene = self._fresh_image_vlm_scene()
+        if not scene:
+            return ""
+        return str(scene.get("recommended_search_area") or "").strip().lower()
+
+    def _vision_action_note(self) -> str | None:
+        scene = self._fresh_vision_scene()
+        if not scene:
+            return None
+        source = str(scene.get("source", "vision"))
+        if not source.startswith("vlm:"):
+            return None
+        visible = scene.get("runner_visible")
+        blocked = scene.get("blocked_by") or "none"
+        search = scene.get("recommended_search_area") or "none"
+        return (
+            f"Image VLA used vision team={self.team_scope} source={source} "
+            f"visible={visible} blocked_by={blocked} search={search}"
+        )
 
     def _distance(self, a: tuple[float, float, float], b: tuple[float, float, float]) -> float:
         return math.sqrt((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 + (a[2] - b[2]) ** 2)
@@ -348,6 +479,32 @@ class TeamDroneController(Node):
         offset += (index - 2) * 25.0 if index > 1 else 0.0
         return self._clamp_z(base_z + offset)
 
+    def _rotate_xy(self, x: float, y: float, degrees: float) -> tuple[float, float]:
+        radians = math.radians(degrees)
+        c = math.cos(radians)
+        s = math.sin(radians)
+        return x * c - y * s, x * s + y * c
+
+    def _red_swarm_vectors(
+        self,
+        drone: TeamDrone,
+        away_x: float,
+        away_y: float,
+    ) -> tuple[float, float, float, float]:
+        # Red should look like a five-drone swarm, not one runner with four passengers.
+        # Each slot gets a distinct escape lane around the threat vector.
+        lane_degrees = {
+            1: 0.0,
+            2: 42.0,
+            3: -42.0,
+            4: 84.0,
+            5: -84.0,
+        }.get(drone_index(drone), 0.0)
+        escape_x, escape_y = self._rotate_xy(away_x, away_y, lane_degrees)
+        lateral_sign = 1.0 if drone_index(drone) % 2 == 0 else -1.0
+        lateral_x, lateral_y = -escape_y * lateral_sign, escape_x * lateral_sign
+        return self._normalize_xy(escape_x, escape_y) + self._normalize_xy(lateral_x, lateral_y)
+
     def _fallback_role_for(self, drone: TeamDrone) -> str:
         if drone.team == "red":
             return {1: "runner", 2: "screen", 3: "decoy", 4: "hide", 5: "bait"}.get(drone_index(drone), "screen")
@@ -374,59 +531,86 @@ class TeamDroneController(Node):
             away_x, away_y = -to_enemy_x, -to_enemy_y
         side = 1.0 if drone_index(drone) % 2 == 0 else -1.0
         perp_x, perp_y = -to_enemy_y * side, to_enemy_x * side
+        swarm_away_x, swarm_away_y, swarm_perp_x, swarm_perp_y = self._red_swarm_vectors(drone, away_x, away_y)
         threat_distance = self._distance(own, enemy) if enemy_info is not None else None
         runner_threat_distance = self._distance(runner, runner_enemy_info[1]) if runner_enemy_info is not None else None
         cover = cover_point(own, enemy, self.blockers, self.tactical_clearance) if enemy_info is not None else None
+        image_vla = self._fresh_image_vlm_scene()
+        image_runner_visible = self._vision_runner_visible()
+        image_runner_lost = self._vision_runner_lost()
 
         if role in {"screen", "guard"}:
             pressure = 1.0 if runner_threat_distance is not None and runner_threat_distance < 1200.0 else 0.75
+            if image_runner_visible:
+                pressure = max(pressure, 1.15)
             runner_to_enemy_x, runner_to_enemy_y = self._normalize_xy(enemy[0] - runner[0], enemy[1] - runner[1])
             screen_perp_x, screen_perp_y = -runner_to_enemy_y * side, runner_to_enemy_x * side
             desired_x = runner[0] + runner_to_enemy_x * self.screen_distance * pressure + screen_perp_x * self.screen_lateral
             desired_y = runner[1] + runner_to_enemy_y * self.screen_distance * pressure + screen_perp_y * self.screen_lateral
             if threat_distance is not None and threat_distance < self.min_enemy_separation * 1.35:
-                desired_x = own[0] + away_x * self.red_escape_distance + perp_x * self.screen_lateral
-                desired_y = own[1] + away_y * self.red_escape_distance + perp_y * self.screen_lateral
+                desired_x = own[0] + swarm_away_x * self.red_escape_distance + swarm_perp_x * self.screen_lateral
+                desired_y = own[1] + swarm_away_y * self.red_escape_distance + swarm_perp_y * self.screen_lateral
                 intent = "screen escaping hard after close blue pressure"
             elif cover is not None and not self._los_clear(own, enemy):
                 desired_x, desired_y = cover[0], cover[1]
                 intent = f"holding cover screen; {cover[2]}"
             else:
                 intent = "blocking the chaser lane from a separated screen point"
+            if image_runner_visible:
+                desired_x += screen_perp_x * self.screen_lateral * 0.55
+                desired_y += screen_perp_y * self.screen_lateral * 0.55
+                intent = "Image VLA screen: camera sees runner, widen the blocker lane"
             speed = self.red_profile.speeds.get("evade", 265.0)
         elif role in {"bait", "decoy"}:
-            desired_x = own[0] + away_x * self.red_escape_distance + perp_x * self.decoy_distance * 0.65
-            desired_y = own[1] + away_y * self.red_escape_distance + perp_y * self.decoy_distance * 0.65
+            desired_x = own[0] + swarm_away_x * self.red_escape_distance + swarm_perp_x * self.decoy_distance * 0.65
+            desired_y = own[1] + swarm_away_y * self.red_escape_distance + swarm_perp_y * self.decoy_distance * 0.65
+            if image_runner_visible:
+                desired_x += swarm_perp_x * self.decoy_distance * 0.45
+                desired_y += swarm_perp_y * self.decoy_distance * 0.45
             if cover is not None and threat_distance is not None and threat_distance < 900.0:
                 desired_x = (desired_x + cover[0]) * 0.5
                 desired_y = (desired_y + cover[1]) * 0.5
                 intent = f"pulling pressure through cover; {cover[2]}"
             else:
                 intent = "sprinting into a wide decoy escape lane"
+            if image_runner_visible:
+                intent = "Image VLA decoy: camera sees runner, pull pressure into a wider false lane"
             speed = self.red_profile.speeds.get("evade", 265.0)
         elif role == "hide":
-            desired_x = own[0] + away_x * self.red_escape_distance * 1.15 - perp_x * self.decoy_distance * 0.55
-            desired_y = own[1] + away_y * self.red_escape_distance * 1.15 - perp_y * self.decoy_distance * 0.55
+            desired_x = own[0] + swarm_away_x * self.red_escape_distance * 1.15 - swarm_perp_x * self.decoy_distance * 0.55
+            desired_y = own[1] + swarm_away_y * self.red_escape_distance * 1.15 - swarm_perp_y * self.decoy_distance * 0.55
             if cover is not None:
                 desired_x, desired_y = cover[0], cover[1]
                 intent = f"staying alive behind cover; {cover[2]}"
+            elif image_runner_visible:
+                desired_x += swarm_away_x * self.red_escape_distance * 0.25
+                desired_y += swarm_away_y * self.red_escape_distance * 0.25
+                intent = "Image VLA hide: camera sees runner, stretch to a farther reset outlet"
+            elif image_runner_lost:
+                desired_x -= swarm_perp_x * self.decoy_distance * 0.25
+                desired_y -= swarm_perp_y * self.decoy_distance * 0.25
+                intent = "Image VLA hide: vision is uncertain, preserve the broken-sight outlet"
             else:
                 intent = "opening maximum distance as a reset outlet"
             speed = self.red_profile.speeds.get("evade", 265.0)
         else:
-            desired_x = own[0] + away_x * self.red_escape_distance * 0.9 - perp_x * self.decoy_distance * 0.45
-            desired_y = own[1] + away_y * self.red_escape_distance * 0.9 - perp_y * self.decoy_distance * 0.45
+            desired_x = own[0] + swarm_away_x * self.red_escape_distance * 0.9 - swarm_perp_x * self.decoy_distance * 0.45
+            desired_y = own[1] + swarm_away_y * self.red_escape_distance * 0.9 - swarm_perp_y * self.decoy_distance * 0.45
             speed = self.red_profile.speeds.get("evade", 265.0)
             intent = "holding a safe outlet away from the runner"
+            if image_vla:
+                intent = "Image VLA outlet: keep a validated escape option open"
 
         if threat_distance is not None and threat_distance < self.screen_hunt_distance:
             closeness = max(0.0, min(1.0, (self.screen_hunt_distance - threat_distance) / self.screen_hunt_distance))
             speed = max(speed, self.red_profile.speeds.get("burst", speed) * (0.72 + 0.28 * closeness))
+        if image_runner_visible:
+            speed = max(speed, self.red_profile.speeds.get("burst", speed) * 0.82)
 
         desired_x, desired_y = self._separate_from_allies(drone, own, desired_x, desired_y)
         desired_x, desired_y, avoid_reason = self._avoid_enemy_contact(drone, own, desired_x, desired_y)
         desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
-        reasons = [intent, avoid_reason, route_reason]
+        reasons = [intent, self._vision_action_note(), avoid_reason, route_reason]
         self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
         return desired_x, desired_y, self._role_height(runner[2], role, drone_index(drone)), speed
 
@@ -437,12 +621,51 @@ class TeamDroneController(Node):
             return None
         chaser = self._primary_pose("blue") or own
         nearest_red = self._nearest_enemy(drone)
-        if nearest_red is not None and self._distance(own, nearest_red[1]) <= self.blue_direct_commit_distance:
+        assigned_target = self._assigned_red_target_for_blue(drone)
+        active_red_targets = self._active_red_targets()
+        vision_note = self._vision_action_note()
+        image_runner_lost = self._vision_runner_lost()
+        image_runner_visible = self._vision_runner_visible()
+        image_search = self._vision_search_name()
+        if len(active_red_targets) == 1:
+            target_name, target_pose = active_red_targets[0]
+            target_distance = self._distance(own, target_pose)
+            if target_distance <= self.blue_endgame_commit_distance or target_name == "red_1":
+                speed = self.blue_profile.speeds.get("intercept", 300.0) * self.blue_support_speed_scale
+                desired_x, desired_y = target_pose[0], target_pose[1]
+                desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
+                reasons = [f"VLA endgame collapse on {target_name}", vision_note, route_reason]
+                self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
+                return desired_x, desired_y, self._role_height(target_pose[2], "interceptor", drone_index(drone)), speed
+        should_direct_commit = False
+        if nearest_red is not None:
+            nearest_distance = self._distance(own, nearest_red[1])
+            should_direct_commit = nearest_distance <= self.blue_finish_commit_distance or (
+                role == "interceptor" and nearest_distance <= self.blue_direct_commit_distance
+            )
+        assigned_commit = None
+        if assigned_target is not None:
+            assigned_distance = self._distance(own, assigned_target[1])
+            if (
+                assigned_distance <= self.blue_direct_commit_distance
+                and (assigned_target[0] != "red_1" or len(active_red_targets) == 1)
+                and role in {"flanker", "pressure_screen", "cutoff", "support", "search"}
+            ):
+                assigned_commit = assigned_target
+        if assigned_commit is not None:
+            target_name, target_pose = assigned_commit
+            speed = self.blue_profile.speeds.get("intercept", 300.0) * self.blue_support_speed_scale
+            desired_x, desired_y = target_pose[0], target_pose[1]
+            desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
+            reasons = [f"VLA support finish commit on {target_name}", vision_note, route_reason]
+            self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
+            return desired_x, desired_y, self._role_height(target_pose[2], "interceptor", drone_index(drone)), speed
+        if nearest_red is not None and should_direct_commit:
             target_name, target_pose = nearest_red
             speed = self.blue_profile.speeds.get("intercept", 300.0) * self.blue_support_speed_scale
-            desired_x, desired_y = self._separate_from_allies(drone, own, target_pose[0], target_pose[1])
+            desired_x, desired_y = target_pose[0], target_pose[1]
             desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
-            reasons = [f"direct commit on {target_name}", route_reason]
+            reasons = [f"VLA finish commit on {target_name}", vision_note, route_reason]
             self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
             return desired_x, desired_y, self._role_height(target_pose[2], "interceptor", drone_index(drone)), speed
         screen = self._assigned_red_support_for_blue(drone) or self._nearest_red_support_to_runner()
@@ -450,39 +673,56 @@ class TeamDroneController(Node):
             role = "pressure_screen"
         target = runner
         target_enemy_name = None
-        intent = "pressuring runner"
+        intent = "VLA assigned pressure on runner"
         if role in {"pressure_screen", "support"} and screen is not None:
             screen_name, screen_pose = screen
             target = screen_pose
             target_enemy_name = screen_name
-            intent = f"hunting {screen_name} before it can screen"
+            intent = f"VLA assigned pressure on active target {screen_name}"
+        elif assigned_target is not None and assigned_target[0] != "red_1" and role in {"flanker", "cutoff", "search"}:
+            target_enemy_name, target = assigned_target
+            intent = f"VLA assigned pressure on active target {target_enemy_name}"
         blocked_reason = self._blocking_line_reason(chaser, runner)
+        sight_blocked = blocked_reason is not None or image_runner_lost
 
         runner_from_chaser_x, runner_from_chaser_y = self._normalize_xy(runner[0] - chaser[0], runner[1] - chaser[1])
         side = 1.0 if drone_index(drone) % 2 == 0 else -1.0
         perp_x, perp_y = -runner_from_chaser_y * side, runner_from_chaser_x * side
-        if role == "search":
-            search_x, search_y = self._blue_search_point(drone, runner, chaser, blocked_reason is not None)
+        if role == "search" or (image_runner_lost and drone_index(drone) > 2 and role in {"support", "flanker", "cutoff"}):
+            search_x, search_y = self._blue_search_point(drone, runner, chaser, sight_blocked)
             desired_x = search_x
             desired_y = search_y
             speed = self.blue_profile.speeds.get("search", 190.0)
             intent = "splitting into a search lane around last known red"
             if blocked_reason:
                 intent = f"splitting search because runner sight is {blocked_reason}"
+            if image_runner_lost:
+                intent = f"Image VLA search: image vision uncertain, split {image_search or 'last_seen'} lane"
         elif role == "support":
             center_x, center_y = self._normalize_xy(-runner[0], -runner[1])
             desired_x = runner[0] + center_x * self.cutoff_distance + perp_x * self.flank_distance * 0.35
             desired_y = runner[1] + center_y * self.cutoff_distance + perp_y * self.flank_distance * 0.35
             speed = self.blue_profile.speeds.get("base", 260.0)
             intent = "denying center escape"
+            if image_runner_visible:
+                desired_x = runner[0] + center_x * self.cutoff_distance * 0.65 + perp_x * self.flank_distance * 0.25
+                desired_y = runner[1] + center_y * self.cutoff_distance * 0.65 + perp_y * self.flank_distance * 0.25
+                speed = self.blue_profile.speeds.get("intercept", speed)
+                intent = "Image VLA support: camera sees runner, tighten center denial"
         elif role in {"cutoff", "flanker"}:
-            forward_scale = 0.15 if blocked_reason else 0.35
+            forward_scale = 0.15 if sight_blocked else 0.35
+            if image_runner_visible:
+                forward_scale = 0.5
             desired_x = runner[0] + runner_from_chaser_x * self.flank_distance * forward_scale + perp_x * self.cutoff_distance
             desired_y = runner[1] + runner_from_chaser_y * self.flank_distance * forward_scale + perp_y * self.cutoff_distance
             speed = self.blue_profile.speeds.get("intercept", 300.0)
             intent = "holding a pincer lane beside the runner"
             if blocked_reason:
                 intent = f"flanking around cover because runner sight is {blocked_reason}"
+            if image_runner_lost:
+                intent = f"Image VLA pincer search: image vision lost runner, widen {image_search or 'cover'} lane"
+            elif image_runner_visible:
+                intent = "Image VLA pincer: camera sees runner, tighten the closing lane"
         elif role == "pressure_screen":
             if screen is not None:
                 screen_name, screen_pose = screen
@@ -490,7 +730,7 @@ class TeamDroneController(Node):
                 close_offset = 80.0 + drone_index(drone) * 35.0
                 desired_x = screen_pose[0] + red_to_screen_x * close_offset + perp_x * (80.0 + drone_index(drone) * 35.0)
                 desired_y = screen_pose[1] + red_to_screen_y * close_offset + perp_y * (80.0 + drone_index(drone) * 35.0)
-                intent = f"closing down {screen_name} screen"
+                intent = f"VLA assigned pressure on active target {screen_name}"
             else:
                 desired_x = runner[0] + runner_from_chaser_x * self.screen_hunt_distance * 0.35
                 desired_y = runner[1] + runner_from_chaser_y * self.screen_hunt_distance * 0.35
@@ -510,7 +750,7 @@ class TeamDroneController(Node):
             ignore_enemy=target_enemy_name,
         )
         desired_x, desired_y, route_reason = self._route_xy(own, desired_x, desired_y)
-        reasons = [intent, avoid_reason, route_reason]
+        reasons = [intent, vision_note, avoid_reason, route_reason]
         self.intent[drone.name] = "; ".join(reason for reason in reasons if reason)
         speed *= self.blue_support_speed_scale
         return desired_x, desired_y, self._role_height(target[2], role, drone_index(drone)), speed
@@ -621,11 +861,13 @@ class TeamDroneController(Node):
         self.last_status_at = now
         roles = {drone.name: self.roles.get(drone.name, self._fallback_role_for(drone)) for drone in self.drones}
         intents = {name: self.intent.get(name, "") for name in roles if self.intent.get(name)}
+        speeds = {name: round(self.last_cmd_speed.get(name, 0.0), 1) for name in roles}
         missing_poses = [drone.name for drone in self.drones if self._pose(drone.name) is None]
         self.publish_status(
             "Team support active: "
             f"scope={self.team_scope}, roles={json.dumps(roles, separators=(',', ':'))}, "
             f"intent={json.dumps(intents, separators=(',', ':'))}, "
+            f"cmd_speed={json.dumps(speeds, separators=(',', ':'))}, "
             f"missing_poses={','.join(missing_poses) if missing_poses else 'none'}"
         )
 
@@ -645,7 +887,11 @@ class TeamDroneController(Node):
             desired = self._desired_for_red(drone, role) if drone.team == "red" else self._desired_for_blue(drone, role)
             if desired is None:
                 continue
-            pub.publish(self._command_toward(own, desired))
+            cmd = self._command_toward(own, desired)
+            self.last_cmd_speed[drone.name] = math.sqrt(
+                cmd.linear.x * cmd.linear.x + cmd.linear.y * cmd.linear.y + cmd.linear.z * cmd.linear.z
+            )
+            pub.publish(cmd)
 
 
 def drone_index(drone: TeamDrone) -> int:

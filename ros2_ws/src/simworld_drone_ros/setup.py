@@ -28,6 +28,10 @@ setup(
             "team_coordinator = simworld_drone_ros.team.coordinator:main",
             "team_drone_controller = simworld_drone_ros.team.drone_controller:main",
             "team_panel = simworld_drone_ros.panel.team_panel:main",
+            "visual_observer = simworld_drone_ros.vision.visual_observer:main",
+            "vision_check = simworld_drone_ros.vision.check_vision_stack:main",
+            "vision_prepare_ollama = simworld_drone_ros.vision.prepare_ollama:main",
+            "run_report = simworld_drone_ros.analysis.run_report:main",
         ],
     },
 )

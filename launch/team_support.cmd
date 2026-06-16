@@ -22,6 +22,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Pr
 echo [team] Support controllers for red=%SIM_RED_TEAM_SIZE% blue=%SIM_BLUE_TEAM_SIZE%
 echo [team] Logs: %ROS_LOG_DIR%\team_*.log
 
+if /I "%SIM_VISION_AUTOSTART%"=="1" (
+    powershell -NoProfile -ExecutionPolicy Bypass -Command "Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match 'simworld_drone_ros\.vision\.visual_observer' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }" >nul 2>nul
+    start "visual_observer_blue_1" /min "%ComSpec%" /c call "%~dp0vision.cmd" blue_1 ^> "%ROS_LOG_DIR%\vision_blue_1.log" 2^>^&1
+    start "visual_observer_red_1" /min "%ComSpec%" /c call "%~dp0vision.cmd" red_1 ^> "%ROS_LOG_DIR%\vision_red_1.log" 2^>^&1
+)
+
 start "red_team_coordinator" /min "%ComSpec%" /c call "%~dp0team_node.cmd" red coordinator ^> "%ROS_LOG_DIR%\team_red_coordinator.log" 2^>^&1
 start "blue_team_coordinator" /min "%ComSpec%" /c call "%~dp0team_node.cmd" blue coordinator ^> "%ROS_LOG_DIR%\team_blue_coordinator.log" 2^>^&1
 start "red_team_support" /min "%ComSpec%" /c call "%~dp0team_node.cmd" red support ^> "%ROS_LOG_DIR%\team_red_support.log" 2^>^&1

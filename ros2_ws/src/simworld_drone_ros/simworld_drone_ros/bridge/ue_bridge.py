@@ -1,3 +1,5 @@
+import base64
+import json
 import math
 import os
 import random
@@ -35,6 +37,7 @@ class UeBridge(Node):
         super().__init__("ue_bridge")
 
         self.status_pub = self.create_publisher(String, "/sim/status", 20)
+        self.camera_frame_pub = self.create_publisher(String, "/sim/camera_frame", 5)
         self.legacy_status_pub = self.create_publisher(String, "/drone/status", 20)
         self.legacy_pose_pub = self.create_publisher(PoseStamped, "/drone/pose", 10)
         self.legacy_odom_pub = self.create_publisher(Odometry, "/drone/odom", 10)
@@ -45,6 +48,12 @@ class UeBridge(Node):
         self.control_a_pub = self.create_publisher(String, "/drone_a/control", CONTROL_QOS)
         self.control_b_pub = self.create_publisher(String, "/drone_b/control", CONTROL_QOS)
         self.team_control_pub = self.create_publisher(String, "/team/control", CONTROL_QOS)
+        self.team_control_sub = self.create_subscription(
+            String,
+            "/team/control",
+            self.team_control_callback,
+            CONTROL_QOS,
+        )
 
         self.legacy_cmd_sub = self.create_subscription(
             Twist,
@@ -84,6 +93,27 @@ class UeBridge(Node):
 
         self.host = os.getenv("SIMWORLD_HOST", "127.0.0.1")
         self.port = int(os.getenv("SIMWORLD_PORT", "9000"))
+        self.camera_frame_enabled = os.getenv("SIM_BRIDGE_CAMERA_FRAME_ENABLED", "1").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        self.camera_frame_interval_sec = self._read_float_env("SIM_BRIDGE_CAMERA_FRAME_INTERVAL_SEC", 2.5)
+        self.camera_frame_last_at = 0.0
+        self.camera_id = int(self._read_float_env("SIM_VISION_CAMERA_ID", 0.0))
+        self.camera_width = int(self._read_float_env("SIM_VISION_CAMERA_WIDTH", 320.0))
+        self.camera_height = int(self._read_float_env("SIM_VISION_CAMERA_HEIGHT", 240.0))
+        self.camera_steer_enabled = os.getenv("SIM_BRIDGE_CAMERA_STEER_ENABLED", "0").lower() not in {
+            "0",
+            "false",
+            "no",
+        }
+        self.camera_observer = os.getenv("SIM_VISION_OBSERVER", "blue_1").strip() or "blue_1"
+        self.camera_back_offset = self._read_float_env("SIM_VISION_CAMERA_BACK_CM", 320.0)
+        self.camera_up_offset = self._read_float_env("SIM_VISION_CAMERA_UP_CM", 180.0)
+        self.camera_pitch_deg = self._read_float_env("SIM_VISION_CAMERA_PITCH_DEG", -18.0)
+        self.camera_fov_deg = self._read_float_env("SIM_VISION_CAMERA_FOV_DEG", 90.0)
+        self.camera_ready = False
         self.drone_asset = os.getenv(
             "SIMWORLD_DRONE_ASSET",
             "StaticMeshActor",
@@ -536,25 +566,31 @@ class UeBridge(Node):
         return blockers
 
     def _randomize_chase_start(self) -> None:
-        max_attempts = 100
-        ax, ay = self._random_spawn_point()
-        bx, by = self._random_spawn_point()
-        for _ in range(max_attempts):
-            bx, by = self._random_spawn_point()
-            if math.hypot(ax - bx, ay - by) >= self.min_start_distance:
-                break
-        else:
-            bx = -ax
-            by = -ay
-
-        red_heading = self.spawn_rng.uniform(0.0, math.tau)
-        blue_heading = red_heading + math.pi
-        self._place_team("red", ax, ay, red_heading)
-        self._place_team("blue", bx, by, blue_heading)
         self.tag_paused_until = 0.0
         self.tag_latched = False
         self.match_over = False
         self.eliminated_actor_ids.clear()
+
+        max_attempts = 200
+        placed = False
+        for _ in range(max_attempts):
+            ax, ay = self._random_spawn_point()
+            bx, by = self._random_spawn_point()
+            red_heading = self.spawn_rng.uniform(0.0, math.tau)
+            blue_heading = red_heading + math.pi
+            self._place_team("red", ax, ay, red_heading)
+            self._place_team("blue", bx, by, blue_heading)
+            if self._nearest_opposing_pair()[0] >= self.min_start_distance:
+                placed = True
+                break
+
+        if not placed:
+            max_x = max(0.0, self.spawn_bound_x - self.spawn_margin)
+            red_x = -max_x
+            blue_x = max_x
+            self._place_team("red", red_x, 0.0, 0.0)
+            self._place_team("blue", blue_x, 0.0, math.pi)
+
         for actor in self.actors:
             actor["vx"] = 0.0
             actor["vy"] = 0.0
@@ -655,6 +691,71 @@ class UeBridge(Node):
         for actor in self.actors:
             self._publish_pose(actor, actor["team_pose_pub"], actor["id"])
             self._publish_odom(actor, actor["team_odom_pub"], actor["id"])
+
+    def _actor_by_id(self, actor_id: str) -> dict | None:
+        for actor in self.actors:
+            if actor["id"] == actor_id:
+                return actor
+        return None
+
+    def _prepare_camera_frame_capture(self) -> None:
+        if self.camera_ready:
+            return
+        if self.camera_steer_enabled:
+            self.client.request(f"vset /camera/{self.camera_id}/size {self.camera_width} {self.camera_height}")
+            self.client.request(f"vset /camera/{self.camera_id}/fov {self.camera_fov_deg}")
+        self.camera_ready = True
+        self.publish_status(
+            "UE bridge camera frame publisher ready: "
+            f"camera={self.camera_id} size={self.camera_width}x{self.camera_height} "
+            f"observer={self.camera_observer} steer={int(self.camera_steer_enabled)}"
+        )
+
+    def _publish_camera_frame(self) -> None:
+        if not self.camera_frame_enabled or not self.connected or not self.spawned:
+            return
+        now = time.time()
+        if now - self.camera_frame_last_at < self.camera_frame_interval_sec:
+            return
+        self.camera_frame_last_at = now
+        try:
+            self._prepare_camera_frame_capture()
+            observer = self._actor_by_id(self.camera_observer) or self.actor_b
+            runner = self._actor_by_id("red_1")
+            yaw = 0.0
+            if runner is not None:
+                yaw = math.degrees(math.atan2(runner["y"] - observer["y"], runner["x"] - observer["x"]))
+            if self.camera_steer_enabled:
+                yaw_rad = math.radians(yaw)
+                camera_x = observer["x"] - math.cos(yaw_rad) * self.camera_back_offset
+                camera_y = observer["y"] - math.sin(yaw_rad) * self.camera_back_offset
+                camera_z = self._clamp_z(observer["z"] + self.camera_up_offset)
+                self.client.request(f"vset /camera/{self.camera_id}/location {camera_x} {camera_y} {camera_z}")
+                self.client.request(f"vset /camera/{self.camera_id}/rotation {self.camera_pitch_deg} {yaw} 0")
+            frame = self.client.request(f"vget /camera/{self.camera_id}/lit png")
+            if not isinstance(frame, (bytes, bytearray)) or not frame:
+                raise RuntimeError("UnrealCV camera returned no PNG bytes")
+            msg = String()
+            msg.data = json.dumps(
+                {
+                    "timestamp": now,
+                    "observer": observer["id"],
+                    "camera_id": self.camera_id,
+                    "width": self.camera_width,
+                    "height": self.camera_height,
+                    "frame_bytes": len(frame),
+                    "image_b64": base64.b64encode(bytes(frame)).decode("ascii"),
+                },
+                separators=(",", ":"),
+            )
+            self.camera_frame_pub.publish(msg)
+            self.publish_status(
+                "UE bridge camera frame: "
+                f"observer={observer['id']} camera={self.camera_id} frame_bytes={len(frame)} "
+                f"steer={int(self.camera_steer_enabled)}"
+            )
+        except Exception as exc:
+            self.publish_status(f"UE bridge camera frame warning: {exc}")
 
     def publish_status(self, text: str) -> None:
         msg = String()
@@ -1137,6 +1238,33 @@ class UeBridge(Node):
         except Exception as exc:
             self.publish_status(f"UE bridge error: chase reset failed: {exc}")
 
+    def team_control_callback(self, msg: String) -> None:
+        command = msg.data.strip().lower()
+        if command not in {"start", "start_all", "start_team"}:
+            return
+        if not self.connected or not self.spawned or not self._elimination_active():
+            return
+        if not self.eliminated_actor_ids and not self.match_over:
+            return
+        stale = ",".join(sorted(self.eliminated_actor_ids)) or "match_over"
+        self.publish_status(f"UE bridge warning: clearing stale elimination state before start ({stale})")
+        self.match_over = False
+        self._randomize_chase_start()
+        try:
+            self._push_all_actor_states()
+            self._publish_all_poses()
+            self.publish_status(
+                "Chase start reset: "
+                f"DroneA=({self.actor_a['x']:.1f},{self.actor_a['y']:.1f}), "
+                f"DroneB=({self.actor_b['x']:.1f},{self.actor_b['y']:.1f}), "
+                f"distance_cm={self._primary_pair_distance():.1f}, "
+                f"scoring_distance_cm={self._nearest_opposing_pair()[0]:.1f}, "
+                f"teams=red:{len(self._team_actors('red'))} blue:{len(self._team_actors('blue'))}, "
+                f"catch_mode={self.match_rules.scoring_mode}"
+            )
+        except Exception as exc:
+            self.publish_status(f"UE bridge error: stale elimination reset failed: {exc}")
+
     def cmd_a_callback(self, msg: Twist) -> None:
         self.cmd_actor_callback(self.actor_a, msg, source="duel")
 
@@ -1180,6 +1308,7 @@ class UeBridge(Node):
                     self._apply_actor_color(actor)
         self._update_tag_pause_state()
         self._publish_all_poses()
+        self._publish_camera_frame()
 
 
 def main(args=None) -> None:

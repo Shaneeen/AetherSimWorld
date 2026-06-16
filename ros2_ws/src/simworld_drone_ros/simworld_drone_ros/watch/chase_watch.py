@@ -20,6 +20,7 @@ class ChaseWatch(Node):
         self.chaser = {}
         self.last_summary = ""
         self.last_display_state = {}
+        self.team_mode = False
         self.detail_log = self._open_detail_log()
         self.summary_timer = self.create_timer(5.0, self.summary_tick)
 
@@ -93,10 +94,12 @@ class ChaseWatch(Node):
             return
 
         if lower.startswith("team bridge ready") or lower.startswith("team support ready"):
+            self.team_mode = True
             self._emit("team_ready", f"TEAM: {text}", cooldown=3.0)
             return
 
         if lower.startswith("team support received") or lower.startswith("team support active"):
+            self.team_mode = True
             self._emit("team_support", f"TEAM: {text}", cooldown=5.0)
             return
 
@@ -111,11 +114,20 @@ class ChaseWatch(Node):
             return
 
         if "ollama fallback" in lower:
-            who = "TARGET" if text.startswith("Target") else "CHASER"
             reason = text.split("fallback:", 1)[-1].strip()
             reason = re.sub(r"; retrying in \d+s", "", reason)
-            self._state(who)["ai"] = "fallback"
-            self._emit(f"ai_fail:{who}", f"{who}: AI fallback - {reason}", cooldown=5.0)
+            if text.startswith("Team coordinator"):
+                who = "PLANNER"
+                self._state(who)["ai"] = "fallback"
+                self._emit(
+                    f"planner_fallback:{reason[:80]}",
+                    f"PLANNER: live role planner fallback - {reason}",
+                    cooldown=5.0,
+                )
+            else:
+                who = "TARGET" if text.startswith("Target") else "CHASER"
+                self._state(who)["ai"] = "fallback"
+                self._emit(f"ai_fail:{who}", f"{who}: duel Ollama fallback - {reason}", cooldown=5.0)
             return
 
         if "visibility:" in lower:
@@ -123,6 +135,20 @@ class ChaseWatch(Node):
             event = text.split("visibility:", 1)[-1].strip()
             self._state(who)["visibility"] = event
             self._emit(f"visibility:{who}", f"{who}: {event}", cooldown=5.0)
+            return
+
+        if lower.startswith("vision scene:"):
+            observer = self._field(text, "observer") or "unknown"
+            source = self._field(text, "source") or "vision"
+            visible = self._field(text, "runner_visible") or "unknown"
+            blocked_by = self._field(text, "blocked_by") or "none"
+            search = self._field(text, "search") or "none"
+            confidence = self._field(text, "confidence") or "0.00"
+            self._emit(
+                "vision_scene",
+                f"VISION: {observer} {source}, runner_visible={visible}, blocked_by={blocked_by}, search={search}, confidence={confidence}",
+                cooldown=2.0,
+            )
             return
 
         if "cached ollama" in lower:
@@ -230,6 +256,8 @@ class ChaseWatch(Node):
     def summary_tick(self) -> None:
         if self.last_message_at is None:
             self._emit("summary_wait", "WAITING: no /sim/status messages yet", cooldown=6.0)
+            return
+        if self.team_mode:
             return
 
         target_bits = []

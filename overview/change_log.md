@@ -1,5 +1,59 @@
 # Change Log
 
+## 2026-06-15
+
+- Made image-VLM camera capture spectator-safe by default. The bridge and direct observer no longer reposition UnrealCV camera `0` unless `SIM_BRIDGE_CAMERA_STEER_ENABLED=1`, so the user can watch the match without the AI camera repeatedly stealing the view.
+- Added a first practical image-VLA action bias in the team controller: fresh image VLM scenes now directly affect both red and blue movement goals, not only coordinator role text. Blue tightens pursuit when the runner is visible and splits image-search lanes when vision is blocked or uncertain; red widens screens, decoys, hides, and escape outlets when image VLM says the runner is visible or sight is broken.
+- Updated VLA intent text from generic `VLA used vision` to `Image VLA used vision` when the action layer is using a fresh non-context VLM scene.
+- Added Start, Stop, New Round, and Reset Only buttons to the Tk team panel, using the same reliable ROS control topics as the launch scripts so basic match control can happen from the panel instead of separate terminal commands.
+- Hardened the Live Role Planner so red and blue coordinator requests are staggered, cached, and backed off more gently; malformed planner text can now be salvaged into safe roles instead of immediately counting as a planner failure.
+- Fixed the latest Live Role Planner failure mode by preferring Ollama `/api/chat` for `gpt-oss:latest`; direct testing showed `/api/generate` could return empty or malformed planner output, while `/api/chat` returned clean role JSON for the same role-planning task.
+- Changed red team movement from shared escape directions to visible five-drone swarm lanes, and added `cmd_speed={...}` telemetry to Team support logs so the next run can prove whether all five drones are being commanded at once.
+- Reached the first image-VLM-to-VLA closed-loop milestone in `run_report_20260615_162919.md`: image VLM was enabled, bridge camera frames were seen, `vlm_image_scene_seen=true`, `vlm_context_scene_seen=false`, coordinator vision acceptance was seen, and VLA action layers used fresh VLM vision.
+- Confirmed a complete 5v5 red-elimination run with all five red drones tagged and game over reached.
+- Confirmed better scoring distribution than earlier single-catcher runs: `blue_1` caught two red drones and `blue_2` caught three.
+- Added bridge-owned camera frame publishing on `/sim/camera_frame` so the visual observer can use the bridge's existing UnrealCV connection for image VLM.
+- Updated the visual observer to prefer bridge camera frames, avoid a second UnrealCV connection by default, and keep image-VLM mode as the intended Phase 4 path.
+- Added mission-goal memory for the VLM prompt through `overview\future_plan.md`.
+- Added image-scene confidence repair so clear visual output with bad confidence can still become a low-authority usable hint.
+- Hardened the team coordinator by reducing role-planner output budget, adding JSON repair behavior, and stopping planner scheduling after STOP.
+- Recorded that remaining `live role planner fallback` lines are optional Live Role Planner fragility, not proof that image VLM or Image VLA failed.
+- Updated overview docs to mark the milestone and shift the next work from VLM plumbing to VLA behavior quality: blue target-priority memory, intent cooldowns, richer red defense, better image-scene semantics, and swept-movement fallback investigation.
+
+## 2026-06-11
+
+- Realigned `overview\future_plan.md` so the next main implementation target is VLM-supervised VLA swarm intelligence, not generic future perception work.
+- Recorded the intended adversarial learning shape: separate red/blue VLA planners, separate supervising VLM reviewers, private team tuning notes, and safe controller validation.
+- Added `launch\review_latest_run.cmd` and `simworld_drone_ros.analysis.run_report` to generate post-run VLM supervisor reports under `logs\run_reports\`, keeping only the newest two.
+- Added `overview\latest_update.md` with the latest run diagnosis and the proposed VLM post-run report workflow for review before runtime implementation.
+- Recorded that the latest VLM observer run started and made a VLM request with pose context, but did not yet prove a parsed scene was published or used meaningfully by team planning.
+- Added the proposed `logs\run_reports\` markdown report feature to the overview roadmap, including newest-two retention.
+- Added `launch\run_demo.ps1` and `launch\run_demo.cmd` as a staged launcher for opening bridge, target brain, chaser brain, panel, optional vision, and start/watch windows in order.
+- Added manual staged-launch mode so each next terminal can wait for user confirmation when startup timing needs closer control.
+- Added dry-run support to preview the staged launch commands without opening runtime windows.
+- Added Windows Terminal tab mode through `launch\run_demo.cmd -Tabs` for a tidier staged launch.
+- Fixed Windows Terminal tab argument quoting so tab titles with spaces are not misread as commands.
+- Updated launch instructions with the easier staged launch flow while keeping the existing manual terminal flow as the fallback.
+- Studied the local SimWorld UnrealCV camera examples and tightened the VLM observer path: live vision now sets 320x240 camera frames, logs UnrealCV camera discovery, logs VLM response timing, uses shorter live VLM timeouts, and publishes a fallback `/sim/vision_scene` if the large VLM is too slow.
+- Reviewed `run_report_20260611_135402.md` and fixed two first-round blockers: `team_support.cmd` no longer kills manually launched visual observers, and blue support now uses a narrower VLA finish-commit radius plus active-target pressure instead of letting every white drone repeat `direct commit on red_1`.
+- Updated the run reporter to record `vla_status`, warm fallback vision scenes, VLA finish commits, and VLA assigned-pressure evidence.
+- Focused the live VLM path after `run_report_20260611_141138.md`: image prompts are now compact JSON-only requests, live VLM timeouts are longer, VLM requests wait for enough poses, image request cadence is throttled, and team coordinators log accepted vision scenes so real VLM usage is visible.
+- Fixed the Qwen3-VL response parsing issue found after `run_report_20260611_143127.md`: Ollama can return valid JSON in the `thinking` field while `response` is empty, so the VLM client now parses either field.
+- Added a fast VLM context-scene path, enabled by default, so `/sim/vision_scene` can use a real `source=vlm:qwen3-vl:latest:context` scene even when full image VLM is too slow; image VLM remains available through `SIM_VISION_IMAGE_VLM_ENABLED=1`.
+- Updated blue VLA intents to log `VLA assigned pressure...` during normal pressure behavior so the run report can verify VLA pressure usage.
+- Fixed the latest observed endgame failure where blue drones surrounded the final red drone without closing: when only one active red target remains, blue VLA now switches to `VLA endgame collapse...` direct pursuit for all controlled blue drones, and run reports detect this evidence.
+- After `run_report_20260611_151145.md`, suppressed misleading old 1v1 live watcher summaries during team mode and made run reports distinguish context VLM scenes, image VLM scenes, coordinator vision acceptance, and plans that clearly used a vision hint.
+- Added direct VLM-to-VLA evidence in the blue action controller: it now accepts `/sim/vision_scene`, logs `VLA accepted vision scene`, includes `VLA used vision source=vlm...` in blue action intents when fresh VLM evidence is present, and exposes both checks in run reports.
+- Mirrored VLM-to-VLA evidence onto red: red and blue controllers now both log team-specific `VLA accepted vision scene` and `VLA used vision team=... source=vlm...` evidence, and run reports split red/blue VLA vision checks.
+- Reviewed `run_report_20260611_154455.md` and fixed two bridge/accounting issues: run reports no longer drop early bridge logs on long runs, and the bridge now clears stale elimination state on a dirty `start_all` before a new red-elimination round begins.
+- Fixed team reset placement so the bridge validates the nearest actual red/blue scoring pair distance, not only the two primary anchor drones; this prevents support drones from starting already inside catch range.
+- Fixed blue active-target detection so low-altitude but still-active red drones are not mistaken for eliminated drones; only near-ground/eliminated red poses are ignored.
+- Fixed the post-run reviewer after `run_report_20260611_160918.md` so an empty Qwen final response no longer exposes `thinking` text; reports now fall back to a deterministic markdown review.
+- Fixed the team coordinator module so `python -m simworld_drone_ros.team.coordinator` actually starts the ROS node; this restores coordinator plans, coordinator vision acceptance, and coordinator-level VLM/VLA evidence.
+- Updated run reports to include red/blue coordinator logs directly and flag whether coordinator plans, coordinator vision acceptance, and single-catcher scoring monopolies were seen.
+- Tuned blue VLA support behavior so non-primary blue drones can perform assigned-target finish commits within the configured direct-commit distance, rather than leaving all scoring finishes to `blue_1`.
+- Added explicit image-VLM launch paths: `vision.cmd --image`, `vision_image.cmd`, and `run_demo.cmd -ImageVision`, plus report fields for image-VLM enabled state and captured frame bytes.
+
 ## 2026-05-10
 
 - Reviewed the existing drone-vs-drone chase setup and identified the main areas to improve: movement control, chase logic, collision handling, watcher logs, and future team-vs-team support.
@@ -197,3 +251,37 @@
 - Reviewed the latest 5v5 chase log and found blue support drones were holding tag spacing from red drones, causing loitering and parallel movement instead of committed attacks.
 - Changed blue team support movement so nearby active red drones trigger a direct commit chase, while red drones still keep evasive spacing.
 - Added `SIM_BLUE_DIRECT_COMMIT_DISTANCE_CM=1200` to the 5v5 preset and ignored downed red drones during blue target search.
+
+## 2026-06-04
+
+- Started Phase 5 as a VLM-assisted perception layer instead of jumping straight to a full trained VLA model.
+- Added `simworld_drone_ros/vision/visual_observer.py`, which can position an UnrealCV camera near an observer drone, capture `lit` frames, and publish structured scene summaries to `/sim/vision_scene`.
+- Added `simworld_drone_ros/vision/vlm_client.py` for Ollama multimodal generate calls, defaulting to `qwen2.5vl:7b`.
+- Added `simworld_drone_ros/vision/scene_parser.py` to normalize VLM JSON and provide a pose/blocker fallback scene for testing.
+- Updated team coordinators to subscribe to `/sim/vision_scene`, ignore stale or low-confidence scenes, include vision context in Ollama team prompts, and use vision only as a role-planning hint.
+- Blue role planning can now split into `search`/`cutoff` sooner when vision reports blocked or uncertain runner sight.
+- Red role planning can prefer `hide`/`decoy` support when vision reports cover or occlusion.
+- Added `launch\vision.cmd` and optional `SIM_VISION_AUTOSTART=1` support in `launch\team_support.cmd`.
+- Updated `launch\stop.cmd` so the visual observer is cleaned with the rest of the ROS runtime.
+- Updated overview docs to describe the practical VLM-to-VLA-style path:
+  `camera/image + pose/odom/state -> VLM scene JSON -> team coordinator -> safe controller velocity command`.
+- Recorded the recommended first VLM path: use Qwen2.5-VL 7B/Instruct or the closest available Ollama tag first, move to larger Qwen2.5-VL/Qwen3-VL variants when hardware allows, and keep OpenVLA as future reference/fine-tuning scope rather than the first drone runtime model.
+- Clarified the continuous-improvement target: VLM scene summaries plus match logs should improve each team's VLA-style planner through tactic weights, prompt/context updates, and validated role/goal plans between rounds, not raw velocity control or unsupported self-training claims.
+- Switched the default VLM runtime model to `qwen3-vl:latest` after confirming that exact tag exists on the configured Ollama server and reports `vision` capability.
+- Added `launch\vision_check.cmd` and `simworld_drone_ros/vision/check_vision_stack.py` to diagnose the VLM server, model tag, model capability, tiny generation, and optional UnrealCV camera capture.
+- Found that `qwen3-vl:latest` tiny generate/chat checks timed out before the model appeared in `/api/ps`; the next operational fix is likely server-side model loading/VRAM/Ollama restart before full image perception can work.
+- Fixed `launch\vision.cmd` startup crash caused by naming the background Python worker `self.executor`, which conflicts with ROS `rclpy.node.Node.executor`; the visual observer now uses `self.worker_executor`.
+- Confirmed `launch\vision.cmd` now reaches `Vision observer ready`, connects to SimWorld through UnrealCV, and publishes fallback scene JSON when VLM output is not usable.
+- Found that Qwen3-VL returned empty `response` when `num_predict` was too small because it spent tokens in the `thinking` field and stopped with `done_reason=length`.
+- Increased VLM output budget defaults to `SIM_VLM_NUM_PREDICT=256`; a tiny Qwen3-VL generate test then returned `{"ok":true}` successfully.
+- Added `SIM_VISION_CHECK_IMAGE_VLM=1` support to `launch\vision_check.cmd` so the stack can test UnrealCV camera capture plus actual image-to-VLM JSON output.
+- Confirmed image VLM smoke test works: camera 0 returned a SimWorld frame, and Qwen3-VL described the gray indoor scene with tiled floors and a central column in JSON after about 20 seconds.
+- Updated visual observer node naming so each observer uses a unique ROS node name such as `visual_observer_blue_1`.
+- Updated `launch\vision.cmd` to accept an observer argument, such as `launch\vision.cmd blue_1` or `launch\vision.cmd red_1`.
+- After `run_report_20260615_131529.md`, found that image VLM launched but the first worker was not clearly logged and timed out after the round had already ended; visual observer logging now always records each request, camera capture begin/ok with frame bytes, and image VLM request begin.
+- Raised the live vision observer timeout default to `SIM_VISION_REQUEST_TIMEOUT_SEC=180` and kept `SIM_VLM_NUM_PREDICT=256` so the full run matches the successful image VLM smoke-test settings more closely.
+- Switched `launch\review_latest_run.cmd` and the run report default reviewer to `gpt-oss:latest` so post-run markdown review does not compete with Qwen3-VL image vision by default.
+- Added `simworld_drone_ros.vision.prepare_ollama` and wired it into `launch\vision.cmd` plus `launch\vision_check.cmd`; it automatically attempts to unload stale `magicoder:latest` and warm `qwen3-vl:latest` while leaving `gpt-oss:latest` available for team planning.
+- Wired the same Ollama prep into team coordinator launch, raised team Ollama timeout from 20s to 60s, lowered team plan output budget to 128 tokens, and added `keep_alive` so `gpt-oss:latest` has a better chance of staying responsive during swarm role planning.
+- Changed `launch\review_latest_run.cmd` so post-run review waits until Ollama finishes by default (`SIM_RUN_REPORT_TIMEOUT_SEC=0`) instead of timing out and immediately falling back to the deterministic review.
+- Updated `SIM_VISION_AUTOSTART=1` behavior so team support starts primary blue/red visual observers, while all-ten per-drone VLM vision remains future scaling work.
